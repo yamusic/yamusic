@@ -1,0 +1,24 @@
+[package]
+authors = ["vyfor"]
+categories = ["command-line-utilities", "multimedia", "multimedia::audio"]
+description = "Yandex Music for the terminal"
+edition = "2021"
+keywords = ["yandex", "music", "tui", "cli", "audio-player"]
+license = "GPL-3.0-or-later"
+name = "yatui"
+repository = "https://github.com/vyfor/yatui"
+version = "0.0.1"
+
+[dependencies]
+tokio = { version = "1.38", features = ["full"] }
+yandex-music = "0.2"
+reqwest = "0.12"
+ratatui = "0.26"
+crossterm = "0.27"
+
+stream-download = "0.5"
+url = "2.5"
+rodio = { version = "0.18", features = ["symphonia-all"] }
+symphonia = "0.5.4"
+symphonia-bundle-flac = "0.5.3"
+symphonia-format-isomp4 = "0.5.3"
