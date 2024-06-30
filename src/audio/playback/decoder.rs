@@ -9,10 +9,10 @@ use symphonia::{
     default::{get_codecs, get_probe},
 };
 
-use crate::{audio::source::MediaSourceWrapper, event::events::ControlSignal};
+use crate::{event::events::ControlSignal, stream::streamer::AudioStreamer};
 
 pub fn decode_audio(
-    buffer: MediaSourceWrapper,
+    buffer: AudioStreamer,
     channels: usize,
     codec: String,
     tx: Sender<f32>,

@@ -2,13 +2,12 @@ use cpal::{
     traits::{DeviceTrait, HostTrait},
     Device, SampleFormat, StreamConfig,
 };
-use url::Url;
 use yandex_music::YandexMusicClient;
 
 pub async fn fetch_track_url(
     client: &YandexMusicClient,
     track_id: i32,
-) -> (Url, String) {
+) -> (String, String) {
     let download_info = client.get_track_download_info(track_id).await.unwrap();
     let info = download_info
         .iter()
@@ -16,7 +15,7 @@ pub async fn fetch_track_url(
         .unwrap();
     let url = info.get_direct_link(&client.client).await.unwrap();
 
-    (url::Url::parse(&url).unwrap(), info.codec.clone())
+    (url, info.codec.clone())
 }
 
 pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {

@@ -5,12 +5,9 @@ use cpal::{
     FromSample, SizedSample, StreamConfig,
 };
 use crossbeam_channel::{Receiver, Sender};
-use stream_download::{
-    storage::temp::TempStorageProvider, Settings, StreamDownload,
-};
 use yandex_music::YandexMusicClient;
 
-use crate::{audio::source::MediaSourceWrapper, event::events::ControlSignal};
+use crate::{event::events::ControlSignal, stream::streamer::AudioStreamer};
 
 use super::{
     decoder::decode_audio,
@@ -87,22 +84,10 @@ pub async fn play(
     channels: usize,
 ) -> anyhow::Result<()> {
     let (url, codec) = fetch_track_url(client, track_id).await;
-    let stream = StreamDownload::new_http(
-        url,
-        TempStorageProvider::default(),
-        Settings::default(),
-    )
-    .await
-    .unwrap();
+    let stream = AudioStreamer::new(url, 32 * 1024, 128 * 1024).unwrap();
 
     thread::spawn(move || {
-        decode_audio(
-            MediaSourceWrapper(stream),
-            channels,
-            codec,
-            tx,
-            control_rx,
-        )
+        decode_audio(stream, channels, codec, tx, control_rx)
     });
 
     Ok(())
