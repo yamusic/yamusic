@@ -26,7 +26,7 @@ impl AudioPlayer {
         rx: Receiver<GlobalEvent>,
     ) -> anyhow::Result<Self> {
         let client = YandexMusicClient::new(env!("YANDEX_MUSIC_TOKEN"));
-        let (tx_audio, rx_audio) = crossbeam_channel::unbounded();
+        let (tx_audio, rx_audio) = crossbeam_channel::bounded(128 * 1024);
         let (control_tx, control_rx) = crossbeam_channel::unbounded();
         let (stopper_tx, stopper_rx) = crossbeam_channel::bounded(1);
         let stream_config = init(rx_audio.clone(), stopper_rx.clone())?;
@@ -63,7 +63,7 @@ impl AudioPlayer {
 
             let (stopper_tx, stopper_rx) = crossbeam_channel::bounded(1);
             let (control_tx, control_rx) = crossbeam_channel::unbounded();
-            let (tx_audio, rx_audio) = crossbeam_channel::unbounded();
+            let (tx_audio, rx_audio) = crossbeam_channel::bounded(256 * 1024);
 
             self.stopper_tx = stopper_tx.clone();
             self.stopper_rx = stopper_rx.clone();
