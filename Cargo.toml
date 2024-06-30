@@ -12,11 +12,9 @@ version = "0.0.1"
 [dependencies]
 tokio = { version = "1.38", features = ["full"] }
 yandex-music = "0.2.5"
-reqwest = "0.12"
+reqwest = { version = "0.12", features = ["blocking"] }
 ratatui = "0.27"
 
-stream-download = "0.5"
-url = "2.5"
 cpal = "0.15"
 symphonia = { version = "0.5.4", features = ["mp3", "aac"] }
 anyhow = "1.0"
