@@ -1,9 +1,12 @@
+use std::time::Duration;
+
 use yandex_music::model::track_model::track::Track;
 
 pub enum GlobalEvent {
     // Events
     Initialize,
     TracksFetched(Vec<Track>),
+    TrackEnded,
 
     // Commands
     Play(i32),
@@ -22,5 +25,14 @@ pub enum GlobalEvent {
 
 pub enum ControlSignal {
     Stop,
-    Seek(u32),
+    Seek(u64),
+    SeekForward(u64),
+    SeekBackward(u64),
+}
+
+pub enum PlayerCommand {
+    Play,
+    Pause,
+    Volume(f32),
+    Seek(Duration),
 }

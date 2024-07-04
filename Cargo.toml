@@ -10,13 +10,36 @@ repository = "https://github.com/vyfor/yatui"
 version = "0.0.1"
 
 [dependencies]
-tokio = { version = "1.38", features = ["full"] }
-yandex-music = "0.2.5"
-reqwest = { version = "0.12", features = ["blocking"] }
-ratatui = "0.27"
+# Core 
+tokio = { version = "1.38.0", features = ["full"] }
+tokio-util = "0.7.11"
+reqwest = { version = "0.12.5", features = ["blocking"] }
 
-cpal = "0.15"
-symphonia = { version = "0.5.4", features = ["mp3", "aac"] }
-anyhow = "1.0"
-crossbeam-channel = "0.5"
-dotenv = "0.15"
+# TUI
+ratatui = "0.27.0"
+crossterm = { version = "0.27.0" }
+
+# Audio
+rodio = { git = "https://github.com/vyfor/rodio.git", rev = "6664a7b", features = [
+  "symphonia-aac",
+  "symphonia-mp3",
+] }
+yandex-music = "0.2.5"
+# rodio = { version = "0.19", features = [
+#   "symphonia-aac",
+#   "symphonia-isomp4",
+#   "symphonia-mp3",
+# ] }
+
+# Logging
+tracing-error = "0.2.0"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+color-eyre = "0.6.3"
+directories = "5.0.1"
+
+# Utilities
+anyhow = "1.0.86"
+dotenv = "0.15.0"
+lazy_static = "1.5.0"
+flume = { version = "0.11.0" }

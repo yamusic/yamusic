@@ -1,13 +1,20 @@
-use cpal::{
-    traits::{DeviceTrait, HostTrait},
-    Device, SampleFormat, StreamConfig,
+use rodio::{
+    cpal::{
+        default_host, traits::HostTrait, BufferSize, SampleFormat, SampleRate,
+        StreamConfig,
+    },
+    Device, DeviceTrait,
 };
+// use cpal::{
+//     traits::{DeviceTrait, HostTrait},
+//     Device, SampleFormat, StreamConfig,
+// };
 use yandex_music::YandexMusicClient;
 
 pub async fn fetch_track_url(
     client: &YandexMusicClient,
     track_id: i32,
-) -> (String, String) {
+) -> (String, String, i32) {
     let download_info = client.get_track_download_info(track_id).await.unwrap();
     let info = download_info
         .iter()
@@ -15,11 +22,11 @@ pub async fn fetch_track_url(
         .unwrap();
     let url = info.get_direct_link(&client.client).await.unwrap();
 
-    (url, info.codec.clone())
+    (url, info.codec.clone(), info.bitrate_in_kbps)
 }
 
 pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
-    let host = cpal::default_host();
+    let host = default_host();
     let device = host.default_output_device().unwrap();
     let config: StreamConfig;
     let sample_format: SampleFormat;
@@ -32,16 +39,16 @@ pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
         config = StreamConfig {
             channels: default_config.channels(),
             sample_rate: default_config.max_sample_rate(),
-            buffer_size: cpal::BufferSize::Fixed(4096),
+            buffer_size: BufferSize::Fixed(4096),
         };
         sample_format = default_config.sample_format();
     } else {
         config = StreamConfig {
             channels: 2,
-            sample_rate: cpal::SampleRate(48000),
-            buffer_size: cpal::BufferSize::Fixed(4096),
+            sample_rate: SampleRate(48000),
+            buffer_size: BufferSize::Fixed(4096),
         };
-        sample_format = cpal::SampleFormat::F32;
+        sample_format = SampleFormat::F32;
     }
 
     (device, config, sample_format)
