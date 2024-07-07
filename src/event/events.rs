@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use yandex_music::model::track_model::track::Track;
 
-pub enum GlobalEvent {
+pub enum Event {
     // Events
     Initialize,
     TracksFetched(Vec<Track>),

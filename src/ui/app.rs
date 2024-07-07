@@ -1,23 +1,26 @@
+use std::sync::atomic::Ordering;
+
 use flume::{Receiver, Sender};
 
 use ratatui::{
     buffer::Buffer,
     crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind},
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
-    widgets::{block::Title, Block, Widget},
+    symbols::{self, border},
+    widgets::{block::Title, Block, Borders, Widget},
     Frame,
 };
 
-use crate::{audio::backend::AudioPlayer, event::events::GlobalEvent};
+use crate::{audio::backend::AudioPlayer, event::events::Event, keymap};
 
 use super::{
-    components::progress::ProgressWidget,
-    tui::{self, Event},
+    components::player::PlayerWidget,
+    tui::{self, TerminalEvent},
 };
 pub struct App {
-    pub event_rx: Receiver<GlobalEvent>,
-    pub event_tx: Sender<GlobalEvent>,
+    pub event_rx: Receiver<Event>,
+    pub event_tx: Sender<Event>,
     pub player: AudioPlayer,
     pub has_focus: bool,
     pub should_quit: bool,
@@ -42,6 +45,7 @@ impl App {
 
         tui.enter()?;
 
+        self.handle_event(TerminalEvent::Init).await?;
         loop {
             tui.draw(|f| {
                 self.ui(f);
@@ -49,7 +53,9 @@ impl App {
 
             if let Some(evt) = tui.next().await {
                 self.handle_event(evt).await?;
-            };
+            }
+
+            self.handle_actions().await;
 
             if self.should_quit {
                 break;
@@ -61,14 +67,16 @@ impl App {
         Ok(())
     }
 
-    async fn handle_event(&mut self, evt: Event) -> color_eyre::Result<()> {
+    async fn handle_event(
+        &mut self,
+        evt: TerminalEvent,
+    ) -> color_eyre::Result<()> {
         match evt {
-            Event::Init => self.player.init().await?,
-            Event::Quit => self.should_quit = true,
-            Event::Tick => self.handle_actions().await,
-            Event::FocusGained => self.has_focus = true,
-            Event::FocusLost => self.has_focus = false,
-            Event::Key(key) => self.handle_key_event(key).await,
+            TerminalEvent::Init => self.player.init().await?,
+            TerminalEvent::Quit => self.should_quit = true,
+            TerminalEvent::FocusGained => self.has_focus = true,
+            TerminalEvent::FocusLost => self.has_focus = false,
+            TerminalEvent::Key(key) => self.handle_key_event(key).await,
             _ => {}
         }
 
@@ -77,24 +85,22 @@ impl App {
 
     async fn handle_key_event(&mut self, evt: KeyEvent) {
         #[allow(clippy::single_match)]
-        match evt.kind {
-            KeyEventKind::Press => match evt.code {
-                KeyCode::Char('c') => {
-                    if evt.modifiers == event::KeyModifiers::CONTROL {
-                        self.should_quit = true;
-                    }
-                }
+        if evt.kind == KeyEventKind::Press {
+            keymap! { evt,
+                KeyCode::Char('c') | CONTROL => self.should_quit = true,
                 KeyCode::Char('q') => self.should_quit = true,
+                KeyCode::Char(' ') => self.player.play_pause(),
                 KeyCode::Char('p') => self.player.play_previous().await,
                 KeyCode::Char('n') => self.player.play_next().await,
                 KeyCode::Char('+') => self.player.volume_up(10),
                 KeyCode::Char('-') => self.player.volume_down(10),
                 KeyCode::Char('=') => self.player.set_volume(100),
-                KeyCode::Left => self.player.seek_backwards(10),
-                KeyCode::Right => self.player.seek_forwards(10),
-                _ => {}
-            },
-            _ => {}
+                KeyCode::Char('H') => self.player.seek_backwards(10),
+                KeyCode::Char('L') => self.player.seek_forwards(10),
+                KeyCode::Char('r') => self.player.toggle_repeat_mode(),
+                KeyCode::Char('s') => self.player.toggle_shuffling(),
+                KeyCode::Char('m') => self.player.toggle_mute(),
+            }
         }
     }
 
@@ -104,12 +110,10 @@ impl App {
         }
     }
 
-    async fn handle_action(&mut self, evt: GlobalEvent) {
+    async fn handle_action(&mut self, evt: Event) {
         match evt {
-            GlobalEvent::Play(track_id) => {
-                self.player.play_track(track_id).await
-            }
-            GlobalEvent::TrackEnded => self.player.play_next().await,
+            Event::Play(track_id) => self.player.play_track(track_id).await,
+            Event::TrackEnded => self.player.on_track_end().await,
             _ => {}
         }
     }
@@ -130,24 +134,53 @@ impl Widget for &App {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(8)])
+            .constraints([Constraint::Min(1), Constraint::Length(3)])
             .split(area);
 
-        let mut title =
-            Title::default().alignment(ratatui::layout::Alignment::Center);
+        let title = Title::default()
+            .alignment(Alignment::Center)
+            .content("Yandex Music");
 
+        Block::new()
+            .borders(Borders::LEFT | Borders::TOP | Borders::RIGHT)
+            .border_set(border::Set {
+                bottom_left: symbols::line::NORMAL.vertical_right,
+                bottom_right: symbols::line::NORMAL.vertical_left,
+                ..symbols::border::PLAIN
+            })
+            .title(title)
+            .render(chunks[0], buf);
+
+        let track_title: &str;
+        let track_artist: Option<String>;
         if let Some(track) = self.player.track.as_ref() {
-            title = title.content(format!(
-                "{} @ {}%",
-                track.title.as_deref().unwrap_or("Unknown"),
-                self.player.volume
-            ));
+            track_title = track.title.as_deref().unwrap_or("Unknown");
+            track_artist = Some(
+                track
+                    .artists
+                    .iter()
+                    .map(|a| a.name.as_deref().unwrap_or("Unknown"))
+                    .collect::<Vec<&str>>()
+                    .join(", "),
+            );
         } else {
-            title = title.content("No track");
+            track_title = "No track";
+            track_artist = None;
         }
-        Block::bordered().title(title).render(chunks[0], buf);
 
-        let progress_widget = ProgressWidget::new(&self.player.track_progress);
-        progress_widget.render(chunks[1], buf);
+        let player_widget = PlayerWidget::new(
+            &self.player.track_progress,
+            track_title,
+            track_artist,
+            self.player.repeat_mode,
+            self.player.is_shuffled,
+            if self.player.is_muted {
+                0
+            } else {
+                self.player.volume
+            },
+            self.player.is_playing.load(Ordering::Relaxed),
+        );
+        player_widget.render(chunks[1], buf);
     }
 }

@@ -32,8 +32,6 @@ fn install_color_eyre_panic_hook(panic_hook: PanicHook) {
             error!("Unable to restore the terminal: {err:?}");
         }
 
-        eprintln!("{:?}", panic_info);
-
         panic_hook(panic_info);
     }));
 }

@@ -133,10 +133,14 @@ impl AudioStreamer {
                 *self.position.write().unwrap() = pos;
                 Ok(pos)
             }
-            _ => Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Invalid seek",
-            )),
+            SeekFrom::Current(pos) => {
+                *self.position.write().unwrap() += pos as u64;
+                Ok(*self.position.read().unwrap())
+            }
+            SeekFrom::End(pos) => {
+                *self.position.write().unwrap() = self.total_bytes - pos as u64;
+                Ok(*self.position.read().unwrap())
+            }
         }
     }
 }

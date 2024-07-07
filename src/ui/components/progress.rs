@@ -2,20 +2,34 @@ use std::time::Duration;
 
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Color, Style},
-    widgets::{Block, Borders, Gauge, Widget},
+    symbols::{self, border},
+    widgets::{block::Title, Block, Borders, Gauge, Widget},
 };
 
 use crate::audio::progress::TrackProgress;
 
 pub struct ProgressWidget<'a> {
     progress: &'a TrackProgress,
+    track_title: &'a str,
+    track_artist: Option<String>,
+    is_playing: bool,
 }
 
 impl<'a> ProgressWidget<'a> {
-    pub fn new(progress: &'a TrackProgress) -> Self {
-        Self { progress }
+    pub fn new(
+        progress: &'a TrackProgress,
+        track_title: &'a str,
+        track_artist: Option<String>,
+        is_playing: bool,
+    ) -> Self {
+        Self {
+            progress,
+            track_title,
+            track_artist,
+            is_playing,
+        }
     }
 }
 
@@ -28,19 +42,40 @@ impl<'a> Widget for ProgressWidget<'a> {
             0.0
         };
 
+        let mut track_info = format!(
+            "{}  {}",
+            if self.is_playing { "" } else { "" },
+            self.track_title
+        );
+        if let Some(artist) = self.track_artist {
+            track_info = format!("{} by {}", track_info, artist);
+        }
+
+        let duration_info = format!(
+            "{} / {}",
+            format_duration(current),
+            format_duration(total)
+        );
+
         let gauge = Gauge::default()
-            .block(Block::default().borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(Title::from(track_info).alignment(Alignment::Center))
+                    .borders(Borders::ALL)
+                    .border_set(border::Set {
+                        top_left: symbols::line::NORMAL.vertical_right,
+                        top_right: symbols::line::NORMAL.horizontal_down,
+                        bottom_right: symbols::line::NORMAL.horizontal_up,
+                        ..symbols::border::PLAIN
+                    }),
+            )
             .gauge_style(
                 Style::default()
                     .fg(Color::from_u32(0x00f7d44b))
                     .bg(Color::from_u32(0x00464646)),
             )
             .ratio(percent.min(1.0))
-            .label(format!(
-                "{} / {}",
-                format_duration(current),
-                format_duration(total)
-            ));
+            .label(duration_info);
 
         gauge.render(area, buf);
     }

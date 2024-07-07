@@ -8,16 +8,17 @@ use std::{
 };
 
 use crate::{
-    audio::playback::utils::fetch_track_url,
-    event::events::{ControlSignal, GlobalEvent, PlayerCommand},
-    stream::streamer::AudioStreamer,
+    audio::playback::utils::fetch_track_url, event::events::Event,
+    stream::streamer::AudioStreamer, utils::random,
 };
-use flume::{Receiver, Sender};
+use flume::Sender;
 use rodio::{cpal::StreamConfig, Decoder, OutputStream, Sink, Source};
 use tracing::info;
 use yandex_music::{model::track_model::track::Track, YandexMusicClient};
 
-use super::{playback::player::init, progress::TrackProgress};
+use super::{
+    enums::RepeatMode, playback::player::init, progress::TrackProgress,
+};
 
 #[allow(dead_code)]
 pub struct AudioPlayer {
@@ -25,15 +26,7 @@ pub struct AudioPlayer {
     sink: Arc<Sink>,
     stream_config: StreamConfig,
     client: Arc<YandexMusicClient>,
-    event_tx: Sender<GlobalEvent>,
-    tx_audio: Sender<(f32, i64)>,
-    rx_audio: Receiver<(f32, i64)>,
-    control_tx: Sender<ControlSignal>,
-    control_rx: Receiver<ControlSignal>,
-    stopper_tx: Sender<bool>,
-    stopper_rx: Receiver<bool>,
-    player_tx: Sender<PlayerCommand>,
-    player_rx: Receiver<PlayerCommand>,
+    event_tx: Sender<Event>,
 
     pub track: Option<Track>,
     pub tracks: Vec<Track>,
@@ -41,20 +34,20 @@ pub struct AudioPlayer {
     pub volume: u8,
 
     pub track_progress: Arc<TrackProgress>,
-    pub playing: Arc<AtomicBool>,
+    pub is_playing: Arc<AtomicBool>,
+    pub is_shuffled: bool,
+    pub is_muted: bool,
+    pub repeat_mode: RepeatMode,
 }
 
 impl AudioPlayer {
     pub async fn new(
-        event_tx: flume::Sender<GlobalEvent>,
+        event_tx: flume::Sender<Event>,
     ) -> color_eyre::Result<Self> {
-        let client = Arc::new(YandexMusicClient::new(&std::env::var(
-            "YANDEX_MUSIC_TOKEN",
-        )?));
-        let (tx_audio, rx_audio) = flume::bounded(128 * 1024);
-        let (control_tx, control_rx) = flume::unbounded();
-        let (stopper_tx, stopper_rx) = flume::unbounded::<bool>();
-        let (player_tx, player_rx) = flume::unbounded::<PlayerCommand>();
+        let client = Arc::new(YandexMusicClient::new(
+            &std::env::var("YANDEX_MUSIC_TOKEN")
+                .expect("YANDEX_MUSIC_TOKEN environment variable must be set"),
+        ));
         let (stream, sink, stream_config) = init()?;
 
         let player = Self {
@@ -63,14 +56,6 @@ impl AudioPlayer {
             stream_config,
             client,
             event_tx,
-            tx_audio,
-            rx_audio,
-            control_tx,
-            control_rx,
-            stopper_tx,
-            stopper_rx,
-            player_tx,
-            player_rx,
 
             track: None,
             tracks: Vec::new(),
@@ -78,18 +63,22 @@ impl AudioPlayer {
             volume: 100,
 
             track_progress: Arc::new(TrackProgress::default()),
-            playing: Arc::new(AtomicBool::new(false)),
+            is_playing: Arc::new(AtomicBool::new(false)),
+            is_shuffled: false,
+            is_muted: false,
+            repeat_mode: RepeatMode::None,
         };
 
         let progress = player.track_progress.clone();
         let sink = player.sink.clone();
         let event_tx = player.event_tx.clone();
-        let playing = player.playing.clone();
+        let playing = player.is_playing.clone();
         thread::spawn(move || loop {
             progress.set_current_position(sink.get_pos());
 
             if playing.load(Ordering::Relaxed) && sink.empty() {
-                event_tx.send(GlobalEvent::TrackEnded).unwrap();
+                playing.store(false, Ordering::Relaxed);
+                let _ = event_tx.send(Event::TrackEnded);
             }
 
             thread::sleep(Duration::from_secs(1));
@@ -112,7 +101,9 @@ impl AudioPlayer {
     }
 
     pub fn next_track(&mut self) {
-        self.track_index = if self.track_index < self.tracks.len() - 1 {
+        self.track_index = if self.is_shuffled {
+            random(0, self.tracks.len() as i32 - 1) as usize
+        } else if self.track_index < self.tracks.len() - 1 {
             self.track_index + 1
         } else {
             0
@@ -120,8 +111,16 @@ impl AudioPlayer {
         self.track = Some(self.tracks[self.track_index].clone());
     }
 
+    pub async fn play_nth(&mut self, index: usize) {
+        if let Some(track) = self.tracks.get(index) {
+            self.track = Some(track.clone());
+            self.track_index = index;
+            self.play_track(track.id).await
+        }
+    }
+
     pub async fn play_previous(&mut self) {
-        self.previous_track();
+        self.previous_track(); // todo: keep track of track history and fetch from there
         self.play_track(self.track.as_ref().unwrap().id).await
     }
 
@@ -136,7 +135,7 @@ impl AudioPlayer {
         let client = self.client.clone();
         let sink = self.sink.clone();
         let track_progress = self.track_progress.clone();
-        let playing = self.playing.clone();
+        let playing = self.is_playing.clone();
         tokio::spawn(async move {
             let (url, codec, bitrate) =
                 fetch_track_url(&client, track_id).await;
@@ -164,29 +163,52 @@ impl AudioPlayer {
     }
 
     pub fn stop_track(&mut self) {
-        self.playing.store(false, Ordering::Relaxed);
+        self.is_playing.store(false, Ordering::Relaxed);
         self.sink.stop();
     }
 
+    pub async fn on_track_end(&mut self) {
+        match self.repeat_mode {
+            RepeatMode::None => self.play_next().await,
+            RepeatMode::Single => {
+                if let Some(track) = self.track.as_ref() {
+                    self.play_track(track.id).await;
+                }
+            }
+            RepeatMode::All => {
+                if self.track_index == self.tracks.len() - 1 {
+                    self.play_nth(0).await;
+                } else {
+                    self.play_next().await;
+                }
+            }
+        }
+    }
+
     pub fn play_pause(&mut self) {
-        if self.sink.is_paused() {
+        let is_paused = self.sink.is_paused();
+        if is_paused {
             self.sink.play();
         } else {
             self.sink.pause();
         }
+        self.is_playing.store(is_paused, Ordering::Relaxed);
     }
 
     pub fn set_volume(&mut self, volume: u8) {
-        self.volume = volume;
+        self.is_muted = false;
+        self.volume = volume.min(200);
         self.sink.set_volume(self.volume as f32 / 100.0);
     }
 
     pub fn volume_up(&mut self, volume: u8) {
-        self.volume = self.volume.saturating_add(volume);
+        self.is_muted = false;
+        self.volume = (self.volume.saturating_add(volume)).min(200);
         self.sink.set_volume(self.volume as f32 / 100.0);
     }
 
     pub fn volume_down(&mut self, volume: u8) {
+        self.is_muted = false;
         self.volume = self.volume.saturating_sub(volume);
         self.sink.set_volume(self.volume as f32 / 100.0);
     }
@@ -201,6 +223,29 @@ impl AudioPlayer {
         self.sink
             .try_seek(self.sink.get_pos() + Duration::from_secs(seconds))
             .unwrap();
+    }
+
+    pub fn toggle_repeat_mode(&mut self) {
+        let mode = match self.repeat_mode {
+            RepeatMode::None => RepeatMode::Single,
+            RepeatMode::Single => RepeatMode::All,
+            RepeatMode::All => RepeatMode::None,
+        };
+
+        self.repeat_mode = mode;
+    }
+
+    pub fn toggle_mute(&mut self) {
+        self.is_muted = !self.is_muted;
+        self.sink.set_volume(if self.is_muted {
+            0.0
+        } else {
+            self.volume as f32 / 100.0
+        });
+    }
+
+    pub fn toggle_shuffling(&mut self) {
+        self.is_shuffled = !self.is_shuffled;
     }
 }
 

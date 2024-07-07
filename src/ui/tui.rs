@@ -19,7 +19,7 @@ use ratatui::crossterm::{
 use ratatui::{backend::CrosstermBackend as Backend, crossterm};
 
 #[derive(Clone, Debug)]
-pub enum Event {
+pub enum TerminalEvent {
     Init,
     Quit,
     Error,
@@ -34,16 +34,16 @@ pub enum Event {
 }
 
 pub struct Tui {
-    pub terminal: ratatui::Terminal<Backend<std::io::Stderr>>,
-    pub event_rx: Receiver<Event>,
-    pub event_tx: Sender<Event>,
+    pub terminal: ratatui::Terminal<Backend<std::io::Stdout>>,
+    pub event_rx: Receiver<TerminalEvent>,
+    pub event_tx: Sender<TerminalEvent>,
     pub mouse: bool,
     pub paste: bool,
 }
 
 impl Tui {
     pub fn new() -> Result<Self> {
-        let terminal = ratatui::Terminal::new(Backend::new(std::io::stderr()))?;
+        let terminal = ratatui::Terminal::new(Backend::new(std::io::stdout()))?;
         let (event_tx, event_rx) = flume::unbounded();
         let mouse = false;
         let paste = false;
@@ -69,10 +69,10 @@ impl Tui {
     pub fn start(&mut self) {
         let event_tx = self.event_tx.clone();
         thread::spawn(move || {
-            event_tx.send(Event::Init).unwrap();
+            event_tx.send(TerminalEvent::Init).unwrap();
             loop {
-                let _ = event_tx.send(Event::Tick);
-                if !event::poll(Duration::from_millis(8)).unwrap() {
+                let _ = event_tx.send(TerminalEvent::Tick);
+                if !event::poll(Duration::from_millis(16)).unwrap() {
                     continue;
                 }
                 let crossterm_event = event::read();
@@ -80,27 +80,27 @@ impl Tui {
                     Ok(evt) => match evt {
                         CrosstermEvent::Key(key) => {
                             if key.kind == KeyEventKind::Press {
-                                event_tx.send(Event::Key(key)).unwrap();
+                                let _ = event_tx.send(TerminalEvent::Key(key));
                             }
                         }
                         CrosstermEvent::Mouse(mouse) => {
-                            event_tx.send(Event::Mouse(mouse)).unwrap();
+                            let _ = event_tx.send(TerminalEvent::Mouse(mouse));
                         }
                         CrosstermEvent::Resize(x, y) => {
-                            event_tx.send(Event::Resize(x, y)).unwrap();
+                            let _ = event_tx.send(TerminalEvent::Resize(x, y));
                         }
                         CrosstermEvent::FocusLost => {
-                            event_tx.send(Event::FocusLost).unwrap();
+                            let _ = event_tx.send(TerminalEvent::FocusLost);
                         }
                         CrosstermEvent::FocusGained => {
-                            event_tx.send(Event::FocusGained).unwrap();
+                            let _ = event_tx.send(TerminalEvent::FocusGained);
                         }
                         CrosstermEvent::Paste(s) => {
-                            event_tx.send(Event::Paste(s)).unwrap();
+                            let _ = event_tx.send(TerminalEvent::Paste(s));
                         }
                     },
                     Err(_) => {
-                        event_tx.send(Event::Error).unwrap();
+                        let _ = event_tx.send(TerminalEvent::Error);
                     }
                 }
             }
@@ -110,15 +110,15 @@ impl Tui {
     pub fn enter(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(
-            std::io::stderr(),
+            std::io::stdout(),
             EnterAlternateScreen,
             cursor::Hide
         )?;
         if self.mouse {
-            crossterm::execute!(std::io::stderr(), EnableMouseCapture)?;
+            crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
         }
         if self.paste {
-            crossterm::execute!(std::io::stderr(), EnableBracketedPaste)?;
+            crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
         }
         self.start();
         Ok(())
@@ -128,13 +128,13 @@ impl Tui {
         if crossterm::terminal::is_raw_mode_enabled()? {
             self.flush()?;
             if self.paste {
-                crossterm::execute!(std::io::stderr(), DisableBracketedPaste)?;
+                crossterm::execute!(std::io::stdout(), DisableBracketedPaste)?;
             }
             if self.mouse {
-                crossterm::execute!(std::io::stderr(), DisableMouseCapture)?;
+                crossterm::execute!(std::io::stdout(), DisableMouseCapture)?;
             }
             crossterm::execute!(
-                std::io::stderr(),
+                std::io::stdout(),
                 LeaveAlternateScreen,
                 cursor::Show
             )?;
@@ -145,7 +145,7 @@ impl Tui {
 
     pub fn restore() -> Result<()> {
         crossterm::execute!(
-            std::io::stderr(),
+            std::io::stdout(),
             LeaveAlternateScreen,
             cursor::Show
         )?;
@@ -154,13 +154,13 @@ impl Tui {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub async fn next(&mut self) -> Option<Event> {
+    pub async fn next(&mut self) -> Option<TerminalEvent> {
         self.event_rx.recv_async().await.ok()
     }
 }
 
 impl Deref for Tui {
-    type Target = ratatui::Terminal<Backend<std::io::Stderr>>;
+    type Target = ratatui::Terminal<Backend<std::io::Stdout>>;
 
     fn deref(&self) -> &Self::Target {
         &self.terminal
