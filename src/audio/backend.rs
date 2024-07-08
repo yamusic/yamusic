@@ -75,8 +75,9 @@ impl AudioPlayer {
         let playing = player.is_playing.clone();
         thread::spawn(move || loop {
             progress.set_current_position(sink.get_pos());
+            let is_playing = playing.load(Ordering::Relaxed);
 
-            if playing.load(Ordering::Relaxed) && sink.empty() {
+            if is_playing && sink.empty() {
                 playing.store(false, Ordering::Relaxed);
                 let _ = event_tx.send(Event::TrackEnded);
             }
@@ -191,6 +192,8 @@ impl AudioPlayer {
             self.sink.play();
         } else {
             self.sink.pause();
+            self.track_progress
+                .set_current_position(self.sink.get_pos());
         }
         self.is_playing.store(is_paused, Ordering::Relaxed);
     }
