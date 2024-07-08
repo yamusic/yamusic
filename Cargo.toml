@@ -44,7 +44,9 @@ dotenv = "0.15.0"
 lazy_static = "1.5.0"
 flume = { version = "0.11.0" }
 
-[profile.release]
+[profile.inc]
+inherits = "release"
 opt-level = 2
 codegen-units = 1024
 lto = false
+incremental = true
