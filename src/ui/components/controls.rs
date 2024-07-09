@@ -63,11 +63,11 @@ impl Widget for PlayerControlsWidget {
         let controls_block = Block::default()
             .borders(Borders::TOP | Borders::BOTTOM)
             .border_set(border::Set {
-                top_left: symbols::line::NORMAL.horizontal_down,
-                top_right: symbols::line::NORMAL.horizontal_down,
-                bottom_left: symbols::line::NORMAL.horizontal_up,
-                bottom_right: symbols::line::NORMAL.horizontal_up,
-                ..symbols::border::PLAIN
+                top_left: symbols::line::ROUNDED.horizontal_down,
+                top_right: symbols::line::ROUNDED.horizontal_down,
+                bottom_left: symbols::line::ROUNDED.horizontal_up,
+                bottom_right: symbols::line::ROUNDED.horizontal_up,
+                ..symbols::border::ROUNDED
             });
         let controls = Paragraph::new(controls_text)
             .block(controls_block)
@@ -98,10 +98,10 @@ impl Widget for PlayerControlsWidget {
             Block::default()
                 .borders(Borders::ALL)
                 .border_set(border::Set {
-                    top_right: symbols::line::NORMAL.vertical_left,
-                    top_left: symbols::line::NORMAL.horizontal_down,
-                    bottom_left: symbols::line::NORMAL.horizontal_up,
-                    ..symbols::border::PLAIN
+                    top_right: symbols::line::ROUNDED.vertical_left,
+                    top_left: symbols::line::ROUNDED.horizontal_down,
+                    bottom_left: symbols::line::ROUNDED.horizontal_up,
+                    ..symbols::border::ROUNDED
                 });
 
         let volume_gauge = Gauge::default()

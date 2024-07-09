@@ -18,6 +18,7 @@ use super::{
     components::player::PlayerWidget,
     tui::{self, TerminalEvent},
 };
+
 pub struct App {
     pub event_rx: Receiver<Event>,
     pub event_tx: Sender<Event>,
@@ -144,9 +145,9 @@ impl Widget for &App {
         Block::new()
             .borders(Borders::LEFT | Borders::TOP | Borders::RIGHT)
             .border_set(border::Set {
-                bottom_left: symbols::line::NORMAL.vertical_right,
-                bottom_right: symbols::line::NORMAL.vertical_left,
-                ..symbols::border::PLAIN
+                bottom_left: symbols::line::ROUNDED.vertical_right,
+                bottom_right: symbols::line::ROUNDED.vertical_left,
+                ..symbols::border::ROUNDED
             })
             .title(title)
             .render(chunks[0], buf);

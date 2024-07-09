@@ -63,10 +63,10 @@ impl<'a> Widget for ProgressWidget<'a> {
                     .title(Title::from(track_info).alignment(Alignment::Center))
                     .borders(Borders::ALL)
                     .border_set(border::Set {
-                        top_left: symbols::line::NORMAL.vertical_right,
-                        top_right: symbols::line::NORMAL.horizontal_down,
-                        bottom_right: symbols::line::NORMAL.horizontal_up,
-                        ..symbols::border::PLAIN
+                        top_left: symbols::line::ROUNDED.vertical_right,
+                        top_right: symbols::line::ROUNDED.horizontal_down,
+                        bottom_right: symbols::line::ROUNDED.horizontal_up,
+                        ..symbols::border::ROUNDED
                     }),
             )
             .gauge_style(
