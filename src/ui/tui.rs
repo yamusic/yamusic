@@ -47,6 +47,7 @@ impl Tui {
         let (event_tx, event_rx) = flume::unbounded();
         let mouse = false;
         let paste = false;
+
         Ok(Self {
             terminal,
             event_rx,
@@ -133,12 +134,7 @@ impl Tui {
             if self.mouse {
                 crossterm::execute!(std::io::stdout(), DisableMouseCapture)?;
             }
-            crossterm::execute!(
-                std::io::stdout(),
-                LeaveAlternateScreen,
-                cursor::Show
-            )?;
-            crossterm::terminal::disable_raw_mode()?;
+            Self::restore()?;
         }
         Ok(())
     }
@@ -154,7 +150,7 @@ impl Tui {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub async fn next(&mut self) -> Option<TerminalEvent> {
+    pub async fn next(&self) -> Option<TerminalEvent> {
         self.event_rx.recv_async().await.ok()
     }
 }
