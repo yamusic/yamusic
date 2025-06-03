@@ -88,7 +88,7 @@ impl AudioStreamer {
     ) -> anyhow::Result<Bytes> {
         Ok(client
             .get(url)
-            .header("Range", format!("bytes={}-{}", start, end))
+            .header("Range", format!("bytes={start}-{end}"))
             .send()?
             .bytes()?)
     }

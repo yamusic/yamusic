@@ -207,7 +207,7 @@ impl AudioPlayer {
         match self.repeat_mode {
             RepeatMode::None => self.play_next().await,
             RepeatMode::Single => {
-                if let Some(track) = self.track.as_ref() {
+                if let Some(_track) = self.track.as_ref() {
                     self.play_track(self.track_index).await;
                 }
             }

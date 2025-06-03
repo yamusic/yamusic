@@ -48,7 +48,7 @@ impl<'a> Widget for ProgressWidget<'a> {
             self.track_title
         );
         if let Some(artist) = self.track_artist {
-            track_info = format!("{} by {}", track_info, artist);
+            track_info = format!("{track_info} by {artist}");
         }
 
         let duration_info = format!(
@@ -85,5 +85,5 @@ fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
-    format!("{:02}:{:02}", minutes, seconds)
+    format!("{minutes:02}:{seconds:02}")
 }
