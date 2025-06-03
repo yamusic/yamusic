@@ -113,7 +113,9 @@ impl App {
 
     async fn handle_action(&mut self, evt: Event) {
         match evt {
-            Event::Play(track_id) => self.player.play_track(track_id).await,
+            Event::Play(track_id) => {
+                self.player.play_track(track_id as usize).await
+            }
             Event::TrackEnded => self.player.on_track_end().await,
             _ => {}
         }

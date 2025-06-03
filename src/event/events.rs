@@ -7,6 +7,7 @@ pub enum Event {
     Initialize,
     TracksFetched(Vec<Track>),
     TrackEnded,
+    TrackChanged(Track, usize),
 
     // Commands
     Play(i32),
