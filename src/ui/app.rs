@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use flume::{Receiver, Sender};
 
-use ratatui::{
-    crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind},
-    Frame,
-};
+use ratatui::Frame;
 
 use crate::{
-    audio::system::AudioSystem, event::events::Event, http::ApiService, keymap,
+    audio::system::AudioSystem, event::events::Event, http::ApiService,
 };
 
-use super::tui::{self, TerminalEvent};
+use super::{
+    tui::{self, TerminalEvent},
+    util::handler::EventHandler,
+};
 
 pub struct App {
     pub event_rx: Receiver<Event>,
@@ -41,87 +41,19 @@ impl App {
 
     pub async fn run(&mut self) -> color_eyre::Result<()> {
         let mut tui = tui::Tui::new()?;
-
         tui.enter()?;
 
-        self.handle_event(TerminalEvent::Init).await?;
-        loop {
+        EventHandler::handle_event(self, TerminalEvent::Init).await?;
+        while !self.should_quit {
             tui.draw(|f| {
                 self.ui(f);
             })?;
 
-            if let Some(evt) = tui.next().await {
-                self.handle_event(evt).await?;
-            }
-
-            self.handle_actions().await;
-
-            if self.should_quit {
-                break;
-            }
+            EventHandler::handle_events(self, &tui).await?;
         }
 
         tui.exit()?;
-
         Ok(())
-    }
-
-    async fn handle_event(
-        &mut self,
-        evt: TerminalEvent,
-    ) -> color_eyre::Result<()> {
-        match evt {
-            TerminalEvent::Init => self.audio_system.init().await?,
-            TerminalEvent::Quit => self.should_quit = true,
-            TerminalEvent::FocusGained => self.has_focus = true,
-            TerminalEvent::FocusLost => self.has_focus = false,
-            TerminalEvent::Key(key) => self.handle_key_event(key).await,
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    async fn handle_key_event(&mut self, evt: KeyEvent) {
-        #[allow(clippy::single_match)]
-        if evt.kind == KeyEventKind::Press {
-            keymap! { evt,
-                KeyCode::Char('c') | CONTROL => self.should_quit = true,
-                KeyCode::Char('q') => self.should_quit = true,
-                KeyCode::Char(' ') => self.audio_system.play_pause(),
-                KeyCode::Char('p') => self.audio_system.play_previous().await,
-                KeyCode::Char('n') => self.audio_system.play_next().await,
-                KeyCode::Char('+') => self.audio_system.volume_up(10),
-                KeyCode::Char('-') => self.audio_system.volume_down(10),
-                KeyCode::Char('=') => self.audio_system.set_volume(100),
-                KeyCode::Char('H') => self.audio_system.seek_backwards(10),
-                KeyCode::Char('L') => self.audio_system.seek_forwards(10),
-                KeyCode::Char('r') => self.audio_system.toggle_repeat_mode(),
-                KeyCode::Char('s') => self.audio_system.toggle_shuffle(),
-                KeyCode::Char('m') => self.audio_system.toggle_mute(),
-            }
-        }
-    }
-
-    async fn handle_actions(&mut self) {
-        while let Ok(evt) = self.event_rx.try_recv() {
-            self.handle_action(evt).await;
-        }
-    }
-
-    async fn handle_action(&mut self, evt: Event) {
-        match evt {
-            Event::Play(track_id) => {
-                self.audio_system
-                    .play_track_at_index(track_id as usize)
-                    .await;
-            }
-            Event::TrackEnded => {
-                self.audio_system.on_track_ended().await;
-            }
-            Event::TrackChanged(_track, _index) => {}
-            _ => {}
-        }
     }
 
     fn ui(&self, frame: &mut Frame) {
