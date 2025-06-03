@@ -1,4 +1,7 @@
-use yatui::ui::{app::App, hook::install_hooks, log::initialize_logging};
+use yatui::{
+    ui::app::App,
+    util::{hook::install_hooks, log::initialize_logging},
+};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
