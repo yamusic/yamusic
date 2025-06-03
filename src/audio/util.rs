@@ -3,27 +3,8 @@ use rodio::{
         default_host, traits::HostTrait, BufferSize, SampleFormat, SampleRate,
         StreamConfig,
     },
-    Device, DeviceTrait,
+    Device, DeviceTrait, OutputStream, Sink,
 };
-// use cpal::{
-//     traits::{DeviceTrait, HostTrait},
-//     Device, SampleFormat, StreamConfig,
-// };
-use yandex_music::YandexMusicClient;
-
-pub async fn fetch_track_url(
-    client: &YandexMusicClient,
-    track_id: i32,
-) -> (String, String, i32) {
-    let download_info = client.get_track_download_info(track_id).await.unwrap();
-    let info = download_info
-        .iter()
-        .max_by_key(|info| info.bitrate_in_kbps)
-        .unwrap();
-    let url = info.get_direct_link(&client.client).await.unwrap();
-
-    (url, info.codec.clone(), info.bitrate_in_kbps)
-}
 
 pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
     let host = default_host();
@@ -52,4 +33,16 @@ pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
     }
 
     (device, config, sample_format)
+}
+
+pub fn construct_sink(
+    device: &Device,
+    config: &StreamConfig,
+    sample_format: &SampleFormat,
+) -> color_eyre::Result<(OutputStream, Sink)> {
+    let (stream, stream_handle) =
+        OutputStream::try_from_device_config(device, config, sample_format)?;
+    let sink = Sink::try_new(&stream_handle)?;
+
+    Ok((stream, sink))
 }
