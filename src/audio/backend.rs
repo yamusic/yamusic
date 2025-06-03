@@ -265,9 +265,9 @@ impl AudioPlayer {
 
     pub fn toggle_repeat_mode(&mut self) {
         let mode = match self.repeat_mode {
-            RepeatMode::None => RepeatMode::Single,
-            RepeatMode::Single => RepeatMode::All,
-            RepeatMode::All => RepeatMode::None,
+            RepeatMode::None => RepeatMode::All,
+            RepeatMode::All => RepeatMode::Single,
+            RepeatMode::Single => RepeatMode::None,
         };
 
         self.repeat_mode = mode;
