@@ -6,7 +6,7 @@ use color_eyre::{
 };
 use tracing::error;
 
-use super::tui;
+use crate::ui::tui;
 
 pub fn install_hooks() -> Result<()> {
     let (panic_hook, eyre_hook) = HookBuilder::default()
