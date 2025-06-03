@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     thread,
@@ -38,6 +38,8 @@ pub struct AudioPlayer {
     pub is_shuffled: bool,
     pub is_muted: bool,
     pub repeat_mode: RepeatMode,
+    pub current_playback_task: Option<tokio::task::JoinHandle<()>>,
+    pub playback_generation: Arc<AtomicU64>,
 }
 
 impl AudioPlayer {
@@ -67,6 +69,8 @@ impl AudioPlayer {
             is_shuffled: false,
             is_muted: false,
             repeat_mode: RepeatMode::None,
+            current_playback_task: None,
+            playback_generation: Arc::new(AtomicU64::new(0)),
         };
 
         let progress = player.track_progress.clone();
@@ -94,78 +98,109 @@ impl AudioPlayer {
         Ok(())
     }
 
-    pub fn previous_track(&mut self) {
+    pub fn previous_track_index(&self) -> usize {
         if self.track_index != 0 {
-            self.track_index -= 1;
+            self.track_index - 1
+        } else {
+            0
         }
-        self.track = Some(self.tracks[self.track_index].clone());
     }
 
-    pub fn next_track(&mut self) {
-        self.track_index = if self.is_shuffled {
+    pub fn next_track_index(&self) -> usize {
+        if self.is_shuffled {
             random(0, self.tracks.len() as i32 - 1) as usize
         } else if self.track_index < self.tracks.len() - 1 {
             self.track_index + 1
         } else {
             0
-        };
-        self.track = Some(self.tracks[self.track_index].clone());
+        }
     }
 
     pub async fn play_nth(&mut self, index: usize) {
-        if let Some(track) = self.tracks.get(index) {
-            self.track = Some(track.clone());
-            self.track_index = index;
-            self.play_track(track.id).await
+        if self.tracks.get(index).is_some() {
+            self.play_track(index).await;
         }
     }
 
     pub async fn play_previous(&mut self) {
-        self.previous_track(); // todo: keep track of track history and fetch from there
-        self.play_track(self.track.as_ref().unwrap().id).await
+        let prev_index = self.previous_track_index();
+        self.play_track(prev_index).await;
     }
 
     pub async fn play_next(&mut self) {
-        self.next_track();
-        self.play_track(self.track.as_ref().unwrap().id).await
+        if self.tracks.is_empty() {
+            return;
+        }
+        let next_index = if self.track.is_none() {
+            0
+        } else {
+            self.next_track_index()
+        };
+        self.play_track(next_index).await;
     }
 
-    pub async fn play_track(&mut self, track_id: i32) {
+    pub async fn play_track(&mut self, track_index: usize) {
         self.stop_track();
 
+        if let Some(task) = &self.current_playback_task {
+            task.abort();
+        }
+
+        let generation =
+            self.playback_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let playback_generation = self.playback_generation.clone();
         let client = self.client.clone();
         let sink = self.sink.clone();
         let track_progress = self.track_progress.clone();
         let playing = self.is_playing.clone();
-        tokio::spawn(async move {
-            let (url, codec, bitrate) =
-                fetch_track_url(&client, track_id).await;
-            let stream = AudioStreamer::new(url, 256 * 1024).unwrap();
-            let total_bytes = stream.total_bytes;
-            let decoder = if codec == "mp3" {
-                Decoder::new_mp3(stream)
-            } else {
-                Decoder::new_aac(stream)
-            }
-            .unwrap();
+        let tracks = self.tracks.clone();
+        let event_tx = self.event_tx.clone();
+        self.current_playback_task = Some(tokio::spawn(async move {
+            if let Some(track) = tracks.get(track_index) {
+                let (url, codec, bitrate) =
+                    fetch_track_url(&client, track.id).await;
+                let stream = tokio::task::spawn_blocking(move || {
+                    AudioStreamer::new(url, 256 * 1024)
+                })
+                .await
+                .unwrap()
+                .unwrap();
+                let total_bytes = stream.total_bytes;
+                let decoder = if codec == "mp3" {
+                    Decoder::new_mp3(stream)
+                } else {
+                    Decoder::new_aac(stream)
+                }
+                .unwrap();
 
-            if let Some(total) = decoder.total_duration() {
-                track_progress.set_total_duration(total);
-            } else {
-                info!("total bytes: {}", total_bytes);
-                info!("bitrate: {}", bitrate);
-                track_progress.set_total_duration(Duration::from_secs_f64(
-                    (total_bytes * 8) as f64 / (bitrate * 1000) as f64,
-                ));
+                if playback_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+
+                let _ = event_tx
+                    .send(Event::TrackChanged(track.clone(), track_index));
+
+                if let Some(total) = decoder.total_duration() {
+                    track_progress.set_total_duration(total);
+                } else {
+                    info!("total bytes: {}", total_bytes);
+                    info!("bitrate: {}", bitrate);
+                    track_progress.set_total_duration(Duration::from_secs_f64(
+                        (total_bytes * 8) as f64 / (bitrate * 1000) as f64,
+                    ));
+                }
+                sink.append(decoder);
+                playing.store(true, Ordering::Relaxed);
             }
-            sink.append(decoder);
-            playing.store(true, Ordering::Relaxed);
-        });
+        }));
+        self.track = self.tracks.get(track_index).cloned();
+        self.track_index = track_index;
     }
 
     pub fn stop_track(&mut self) {
         self.is_playing.store(false, Ordering::Relaxed);
         self.sink.stop();
+        self.current_playback_task = None;
     }
 
     pub async fn on_track_end(&mut self) {
@@ -173,7 +208,7 @@ impl AudioPlayer {
             RepeatMode::None => self.play_next().await,
             RepeatMode::Single => {
                 if let Some(track) = self.track.as_ref() {
-                    self.play_track(track.id).await;
+                    self.play_track(self.track_index).await;
                 }
             }
             RepeatMode::All => {
