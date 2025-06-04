@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use yandex_music::{
-    model::track_model::track::{PartialTrack, Track},
+    api::playlist::get_playlists::PlaylistsRequest,
+    model::{
+        playlist_model::playlist::Playlist,
+        track_model::track::{PartialTrack, Track},
+    },
     YandexMusicClient,
 };
 
@@ -28,8 +32,33 @@ impl ApiService {
 
     pub async fn fetch_liked_tracks(
         &self,
-    ) -> color_eyre::Result<Vec<PartialTrack>> {
-        Ok(self.client.get_liked_tracks(self.user_id).await?.tracks)
+    ) -> color_eyre::Result<(Playlist, Vec<PartialTrack>)> {
+        let library = self.client.get_liked_tracks(self.user_id).await?;
+        let playlist = self.client.get_playlist(self.user_id, 3).await?;
+
+        Ok((playlist, library.tracks))
+    }
+
+    pub async fn fetch_all_playlists(
+        &self,
+    ) -> color_eyre::Result<Vec<Playlist>> {
+        Ok(self.client.get_all_playlists(self.user_id).await?)
+    }
+
+    pub async fn fetch_playlists(
+        &self,
+        kinds: Vec<i32>,
+    ) -> color_eyre::Result<Playlist> {
+        self.client
+            .get_playlists(
+                &PlaylistsRequest::new(self.user_id)
+                    .kinds(kinds)
+                    .with_tracks(true),
+            )
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| color_eyre::eyre::eyre!("Playlist not found"))
     }
 
     pub async fn fetch_tracks(

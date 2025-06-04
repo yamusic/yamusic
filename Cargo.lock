@@ -2888,9 +2888,9 @@ checksum = "791978798f0597cfc70478424c2b4fdc2b7a8024aaff78497ef00f24ef674193"
 
 [[package]]
 name = "yandex-music"
-version = "0.2.6"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcd755b2bd0126e5b1cf2684603e630ac65c84cd0ff9f98d0537252c117b0f5f"
+checksum = "e1b038484b9d7247e60e2e3545cd95da11d2e7fefdc3d06fb90478972aa6dce4"
 dependencies = [
  "base64",
  "hmac",

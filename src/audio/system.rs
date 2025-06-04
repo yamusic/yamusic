@@ -1,14 +1,19 @@
 use crate::{
     audio::{
-        engine::AudioPlayer, enums::RepeatMode, progress::TrackProgress,
-        queue::QueueManager,
+        engine::AudioPlayer,
+        enums::RepeatMode,
+        progress::TrackProgress,
+        queue::{PlaybackContext, QueueManager},
     },
     event::events::Event,
     http::ApiService,
 };
 use flume::Sender;
 use std::sync::{atomic::Ordering, Arc};
-use yandex_music::model::track_model::track::Track;
+use yandex_music::model::{
+    playlist_model::playlist::{Playlist, TracksType},
+    track_model::track::Track,
+};
 
 pub struct AudioSystem {
     player: AudioPlayer,
@@ -34,25 +39,51 @@ impl AudioSystem {
     }
 
     pub async fn init(&mut self) -> color_eyre::Result<()> {
-        let tracks = self.api.fetch_liked_tracks().await?;
+        let (playlist, tracks) = self.api.fetch_liked_tracks().await?;
         let tracks = self.api.fetch_tracks_partial(&tracks).await?;
+        let context = PlaybackContext::Playlist(playlist);
 
         if !tracks.is_empty() {
-            self.queue.play_playlist(tracks, 0).await;
+            self.queue.play(context, tracks, 0).await;
         }
 
         Ok(())
     }
 
-    pub async fn play_playlist(&mut self, tracks: Vec<Track>) {
-        if let Some(track) = self.queue.play_playlist(tracks, 0).await {
-            let _ = self.player.play_track(track).await;
+    pub async fn play_playlist(
+        &mut self,
+        playlist: Playlist,
+    ) -> color_eyre::Result<()> {
+        let tracks = match &playlist.tracks {
+            Some(TracksType::Full(tracks)) => tracks.clone(),
+            Some(TracksType::TrackWithInfo(tracks)) => {
+                tracks.iter().map(|t| t.track.clone()).collect()
+            }
+            Some(TracksType::Partial(tracks)) => {
+                self.api.fetch_tracks_partial(tracks).await?
+            }
+            None => panic!("Playlist has no tracks. This should not happen."),
+        };
+
+        if let Some(track) = self
+            .queue
+            .play(PlaybackContext::Playlist(playlist), tracks, 0)
+            .await
+        {
+            self.player.play_track(track).await;
         }
+
+        Ok(())
     }
 
     pub async fn play_single_track(&mut self, track: Track) {
-        let track = self.queue.play_single_track(track).await;
-        let _ = self.player.play_track(track).await;
+        if let Some(track) = self
+            .queue
+            .play(PlaybackContext::Track, vec![track], 0)
+            .await
+        {
+            self.player.play_track(track).await;
+        }
     }
 
     pub async fn play_track_at_index(&mut self, index: usize) {
