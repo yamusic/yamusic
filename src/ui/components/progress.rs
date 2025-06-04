@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Style},
     symbols::{self, border},
-    widgets::{block::Title, Block, Borders, Gauge, Widget},
+    widgets::{Block, Borders, Gauge, Widget},
 };
 
 use crate::audio::progress::TrackProgress;
@@ -60,7 +60,8 @@ impl<'a> Widget for ProgressWidget<'a> {
         let gauge = Gauge::default()
             .block(
                 Block::default()
-                    .title(Title::from(track_info).alignment(Alignment::Center))
+                    .title_top(track_info)
+                    .title_alignment(Alignment::Center)
                     .borders(Borders::ALL)
                     .border_set(border::Set {
                         top_left: symbols::line::ROUNDED.vertical_right,

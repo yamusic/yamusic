@@ -14,6 +14,6 @@ macro_rules! keymap {
     };
     (@check_mods $evt:expr,) => { true };
     (@check_mods $evt:expr, $($mods:ident),+) => {
-        $evt.modifiers == ($(crossterm::event::KeyModifiers::$mods)|+)
+        $evt.modifiers == ($(ratatui::crossterm::event::KeyModifiers::$mods)|+)
     };
 }
