@@ -24,7 +24,7 @@ rodio = { git = "https://github.com/vyfor/rodio.git", rev = "6664a7b", features 
   "symphonia-aac",
   "symphonia-mp3",
 ] }
-yandex-music = "0.2.6"
+yandex-music = "0.2.8"
 # rodio = { version = "0.19", features = [
 #   "symphonia-aac",
 #   "symphonia-isomp4",
