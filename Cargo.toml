@@ -24,7 +24,7 @@ rodio = { git = "https://github.com/vyfor/rodio.git", rev = "6664a7b", features 
   "symphonia-aac",
   "symphonia-mp3",
 ] }
-yandex-music = "0.2.5"
+yandex-music = "0.2.6"
 # rodio = { version = "0.19", features = [
 #   "symphonia-aac",
 #   "symphonia-isomp4",
@@ -43,6 +43,7 @@ anyhow = "1.0.86"
 dotenv = "0.15.0"
 lazy_static = "1.5.0"
 flume = { version = "0.11.0" }
+rand = "0.9.1"
 
 [profile.inc]
 inherits = "release"
