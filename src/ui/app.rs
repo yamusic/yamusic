@@ -58,7 +58,7 @@ impl App {
 
     fn ui(&self, frame: &mut Frame) {
         if self.has_focus {
-            frame.render_widget(self, frame.size());
+            frame.render_widget(self, frame.area());
         }
     }
 }

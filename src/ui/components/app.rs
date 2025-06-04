@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     symbols::{self, border},
-    widgets::{block::Title, Block, Borders, Widget},
+    widgets::{Block, Borders, Widget},
 };
 
 use crate::ui::{app::App, components::player::PlayerWidget};
@@ -20,10 +20,6 @@ impl Widget for &App {
             .constraints([Constraint::Min(1), Constraint::Length(3)])
             .split(area);
 
-        let title = Title::default()
-            .alignment(Alignment::Center)
-            .content("Yandex Music");
-
         Block::new()
             .borders(Borders::LEFT | Borders::TOP | Borders::RIGHT)
             .border_set(border::Set {
@@ -31,7 +27,8 @@ impl Widget for &App {
                 bottom_right: symbols::line::ROUNDED.vertical_left,
                 ..symbols::border::ROUNDED
             })
-            .title(title)
+            .title_top("Yandex Music")
+            .title_alignment(Alignment::Center)
             .render(chunks[0], buf);
 
         let track_title: &str;
