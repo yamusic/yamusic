@@ -44,7 +44,7 @@ impl AudioSystem {
         let context = PlaybackContext::Playlist(playlist);
 
         if !tracks.is_empty() {
-            self.queue.play(context, tracks, 0).await;
+            self.queue.load(context, tracks, 0).await;
         }
 
         Ok(())
@@ -67,7 +67,7 @@ impl AudioSystem {
 
         if let Some(track) = self
             .queue
-            .play(PlaybackContext::Playlist(playlist), tracks, 0)
+            .load(PlaybackContext::Playlist(playlist), tracks, 0)
             .await
         {
             self.player.play_track(track).await;
@@ -79,7 +79,7 @@ impl AudioSystem {
     pub async fn play_single_track(&mut self, track: Track) {
         if let Some(track) = self
             .queue
-            .play(PlaybackContext::Track, vec![track], 0)
+            .load(PlaybackContext::Track, vec![track], 0)
             .await
         {
             self.player.play_track(track).await;
