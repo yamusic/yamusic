@@ -1,158 +1,247 @@
-use std::{
-    io::{Read, Seek, SeekFrom},
-    sync::{Arc, RwLock},
-    thread,
-};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use flume::{Receiver, Sender};
 use tokio_util::bytes::Bytes;
 
 pub struct AudioStreamer {
-    url: String,
-    client: Arc<reqwest::blocking::Client>,
-    ring_buffer: Receiver<u8>,
-    position: Arc<RwLock<u64>>,
-    eof: bool,
+    cursor: Cursor<Vec<u8>>,
+    rx: Option<Receiver<u8>>,
+    handle: Option<tokio::task::JoinHandle<()>>,
     pub total_bytes: u64,
 }
 
 impl AudioStreamer {
-    pub fn new(
+    pub async fn new(
         url: String,
-        // prefetch_bytes: u64,
+        prefetch_bytes: u64,
         fetch_amount: u64,
-    ) -> anyhow::Result<Self> {
-        let client = reqwest::blocking::Client::new();
-        let total_bytes = Self::fetch_total_bytes(&client, &url)?;
+    ) -> color_eyre::Result<Self> {
+        let client = reqwest::Client::new();
+        let total_bytes = Self::fetch_total_bytes(&client, &url).await?;
+
+        let initial_fetch_end =
+            prefetch_bytes.min(total_bytes.saturating_sub(1));
+        let initial_bytes =
+            Self::fetch_range_bytes(&client, &url, 0, initial_fetch_end)
+                .await?;
+
+        let buffer = initial_bytes.to_vec();
         let (tx, rx) = flume::bounded((fetch_amount * 2) as usize);
 
-        let streamer = Self {
-            url,
-            client: Arc::new(client),
-            ring_buffer: rx,
-            position: Arc::new(RwLock::new(0)),
-            eof: false,
-            total_bytes,
+        let handle = if initial_fetch_end + 1 < total_bytes {
+            Some(tokio::spawn(Self::fetch_remaining(
+                client,
+                url,
+                tx,
+                initial_fetch_end + 1,
+                total_bytes,
+                fetch_amount,
+            )))
+        } else {
+            None
         };
 
-        Self::fetch(
-            streamer.url.clone(),
-            streamer.client.clone(),
-            tx,
+        Ok(Self {
+            cursor: Cursor::new(buffer),
+            rx: Some(rx),
+            handle,
             total_bytes,
-            fetch_amount,
-            streamer.position.clone(),
-        );
-
-        Ok(streamer)
+        })
     }
 
-    fn fetch(
+    async fn fetch_remaining(
+        client: reqwest::Client,
         url: String,
-        client: Arc<reqwest::blocking::Client>,
-        ring_buffer: Sender<u8>,
+        sender: Sender<u8>,
+        mut start: u64,
         total_bytes: u64,
         fetch_amount: u64,
-        position: Arc<RwLock<u64>>,
     ) {
-        thread::spawn(move || {
-            let mut current_position = *position.read().unwrap();
+        while start < total_bytes {
+            let end = (start + fetch_amount).min(total_bytes - 1);
 
-            while current_position < total_bytes {
-                let end =
-                    (current_position + fetch_amount).min(total_bytes - 1);
-
-                if let Ok(bytes) = Self::fetch_range_bytes(
-                    &client.clone(),
-                    &url,
-                    current_position,
-                    end,
-                ) {
-                    for b in bytes {
-                        if ring_buffer.send(b).is_err() {
-                            break;
-                        }
+            if let Ok(bytes) =
+                Self::fetch_range_bytes(&client, &url, start, end).await
+            {
+                for byte in bytes {
+                    if sender.send(byte).is_err() {
+                        return;
                     }
-
-                    current_position = end + 1;
                 }
+                start = end + 1;
+            } else {
+                break;
             }
-        });
+        }
     }
 
-    fn fetch_range_bytes(
-        client: &reqwest::blocking::Client,
+    async fn fetch_range_bytes(
+        client: &reqwest::Client,
         url: &str,
         start: u64,
         end: u64,
-    ) -> anyhow::Result<Bytes> {
+    ) -> color_eyre::Result<Bytes> {
         Ok(client
             .get(url)
             .header("Range", format!("bytes={start}-{end}"))
-            .send()?
-            .bytes()?)
+            .send()
+            .await?
+            .bytes()
+            .await?)
     }
 
-    fn fetch_total_bytes(
-        client: &reqwest::blocking::Client,
+    async fn fetch_total_bytes(
+        client: &reqwest::Client,
         url: &str,
-    ) -> anyhow::Result<u64> {
+    ) -> color_eyre::Result<u64> {
         Ok(client
             .head(url)
-            .send()?
+            .send()
+            .await?
             .headers()
             .get("Content-Length")
-            .unwrap()
+            .ok_or_else(|| color_eyre::eyre::eyre!("No content length found"))?
             .to_str()?
             .parse()?)
     }
 
-    pub fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        if self.eof {
-            return Ok(0);
-        }
+    fn ensure_buffer(&mut self, needed_bytes: usize) {
+        if let Some(receiver) = &self.rx {
+            let current_len = self.cursor.get_ref().len();
+            let current_pos = self.cursor.position() as usize;
 
-        let mut read_bytes = 0;
+            if current_pos + needed_bytes > current_len {
+                let mut buffer = self.cursor.get_ref().clone();
+                let mut received_any = true;
 
-        while read_bytes < buf.len() {
-            if let Ok(b) = self.ring_buffer.recv() {
-                buf[read_bytes] = b;
-                read_bytes += 1;
-            } else {
-                self.eof = true;
-                break;
+                while received_any && buffer.len() < current_pos + needed_bytes
+                {
+                    received_any = false;
+
+                    for _ in 0..1024 {
+                        match receiver.try_recv() {
+                            Ok(byte) => {
+                                buffer.push(byte);
+                                received_any = true;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+
+                let pos = self.cursor.position();
+                self.cursor = Cursor::new(buffer);
+                self.cursor.set_position(pos);
             }
         }
-
-        Ok(read_bytes)
     }
 
-    pub fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        match pos {
-            SeekFrom::Start(pos) => {
-                *self.position.write().unwrap() = pos;
-                Ok(pos)
-            }
-            SeekFrom::Current(pos) => {
-                *self.position.write().unwrap() += pos as u64;
-                Ok(*self.position.read().unwrap())
-            }
-            SeekFrom::End(pos) => {
-                *self.position.write().unwrap() = self.total_bytes - pos as u64;
-                Ok(*self.position.read().unwrap())
+    fn ensure_buffer_for_position(
+        &mut self,
+        target_pos: u64,
+    ) -> std::io::Result<()> {
+        if target_pos > self.total_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Seek position beyond file size",
+            ));
+        }
+
+        if let Some(receiver) = &self.rx {
+            let target_pos_usize = target_pos as usize;
+            let current_len = self.cursor.get_ref().len();
+
+            if target_pos_usize >= current_len {
+                let mut buffer = self.cursor.get_ref().clone();
+                let mut received_any = true;
+                let mut attempts = 0;
+                const MAX_ATTEMPTS: usize = 100;
+
+                while received_any
+                    && buffer.len() <= target_pos_usize
+                    && attempts < MAX_ATTEMPTS
+                {
+                    received_any = false;
+                    attempts += 1;
+
+                    for _ in 0..1024 {
+                        match receiver.try_recv() {
+                            Ok(byte) => {
+                                buffer.push(byte);
+                                received_any = true;
+                            }
+                            Err(flume::TryRecvError::Empty) => break,
+                            Err(flume::TryRecvError::Disconnected) => {
+                                received_any = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let current_pos = self.cursor.position();
+                self.cursor = Cursor::new(buffer);
+                self.cursor.set_position(current_pos);
+
+                if target_pos_usize >= self.cursor.get_ref().len() {
+                    if receiver.is_disconnected() {
+                        if target_pos_usize >= self.cursor.get_ref().len() {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::UnexpectedEof,
+                                "Seek position beyond available data",
+                            ));
+                        }
+                    } else {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::WouldBlock,
+                            "Seek position not yet available, try again later",
+                        ));
+                    }
+                }
             }
         }
+
+        Ok(())
     }
 }
 
 impl Read for AudioStreamer {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.read(buf)
+        self.ensure_buffer(buf.len());
+        self.cursor.read(buf)
     }
 }
 
 impl Seek for AudioStreamer {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.seek(pos)
+        let current_pos = self.cursor.position();
+        let target_pos = match pos {
+            SeekFrom::Start(pos) => pos,
+            SeekFrom::End(offset) => {
+                if offset >= 0 {
+                    self.total_bytes.saturating_add(offset as u64)
+                } else {
+                    self.total_bytes.saturating_sub((-offset) as u64)
+                }
+            }
+            SeekFrom::Current(offset) => {
+                if offset >= 0 {
+                    current_pos.saturating_add(offset as u64)
+                } else {
+                    current_pos.saturating_sub((-offset) as u64)
+                }
+            }
+        };
+
+        self.ensure_buffer_for_position(target_pos)?;
+        self.cursor.seek(pos)
+    }
+}
+
+impl Drop for AudioStreamer {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
     }
 }
