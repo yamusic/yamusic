@@ -1,6 +1,6 @@
 use yatui::{
     ui::app::App,
-    util::{hook::install_hooks, log::initialize_logging},
+    util::{hook::set_panic_hook, log::initialize_logging},
 };
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
@@ -12,7 +12,8 @@ async fn main() -> color_eyre::Result<()> {
 }
 
 fn setup() -> color_eyre::Result<()> {
+    color_eyre::install()?;
     dotenv::dotenv().ok();
-    install_hooks()?;
+    set_panic_hook();
     initialize_logging()
 }
