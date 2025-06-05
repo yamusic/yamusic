@@ -149,55 +149,24 @@ impl AudioStreamer {
 
         if let Some(receiver) = &self.rx {
             let target_pos_usize = target_pos as usize;
-            let current_len = self.cursor.get_ref().len();
+            let mut buffer = self.cursor.get_ref().clone();
 
-            if target_pos_usize >= current_len {
-                let mut buffer = self.cursor.get_ref().clone();
-                let mut received_any = true;
-                let mut attempts = 0;
-                const MAX_ATTEMPTS: usize = 100;
-
-                while received_any
-                    && buffer.len() <= target_pos_usize
-                    && attempts < MAX_ATTEMPTS
-                {
-                    received_any = false;
-                    attempts += 1;
-
-                    for _ in 0..1024 {
-                        match receiver.try_recv() {
-                            Ok(byte) => {
-                                buffer.push(byte);
-                                received_any = true;
-                            }
-                            Err(flume::TryRecvError::Empty) => break,
-                            Err(flume::TryRecvError::Disconnected) => {
-                                received_any = false;
-                                break;
-                            }
-                        }
-                    }
+            while buffer.len() <= target_pos_usize {
+                match receiver.recv() {
+                    Ok(byte) => buffer.push(byte),
+                    Err(_) => break,
                 }
+            }
 
-                let current_pos = self.cursor.position();
-                self.cursor = Cursor::new(buffer);
-                self.cursor.set_position(current_pos);
+            let current_pos = self.cursor.position();
+            self.cursor = Cursor::new(buffer);
+            self.cursor.set_position(current_pos);
 
-                if target_pos_usize >= self.cursor.get_ref().len() {
-                    if receiver.is_disconnected() {
-                        if target_pos_usize >= self.cursor.get_ref().len() {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::UnexpectedEof,
-                                "Seek position beyond available data",
-                            ));
-                        }
-                    } else {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::WouldBlock,
-                            "Seek position not yet available, try again later",
-                        ));
-                    }
-                }
+            if target_pos_usize >= self.cursor.get_ref().len() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "Seek position beyond available data",
+                ));
             }
         }
 
