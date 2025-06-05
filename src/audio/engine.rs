@@ -102,8 +102,8 @@ impl AudioPlayer {
         let track_clone = track.clone();
 
         self.current_playback_task = Some(tokio::task::spawn(async move {
-            let (url, codec, bitrate) =
-                api.fetch_track_url(track_clone.id).await.unwrap();
+            let (url, _codec, bitrate) =
+                api.fetch_track_url(track_clone.id.clone()).await.unwrap();
 
             let stream = AudioStreamer::new(url, 256 * 1024, 256 * 1024)
                 .await
@@ -177,15 +177,23 @@ impl AudioPlayer {
     }
 
     pub fn seek_backwards(&mut self, seconds: u64) {
-        self.sink
-            .try_seek(self.sink.get_pos() - Duration::from_secs(seconds))
-            .unwrap();
+        self.sink.pause();
+        let _ = self.sink.try_seek(
+            self.sink
+                .get_pos()
+                .saturating_sub(Duration::from_secs(seconds)),
+        );
+        self.sink.play();
     }
 
     pub fn seek_forwards(&mut self, seconds: u64) {
-        self.sink
-            .try_seek(self.sink.get_pos() + Duration::from_secs(seconds))
-            .unwrap();
+        self.sink.pause();
+        let _ = self.sink.try_seek(
+            self.sink
+                .get_pos()
+                .saturating_add(Duration::from_secs(seconds)),
+        );
+        self.sink.play();
     }
 
     pub fn toggle_mute(&mut self) {
