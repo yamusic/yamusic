@@ -149,9 +149,23 @@ impl QueueManager {
     }
 
     pub fn get_previous_track(&mut self) -> Option<Track> {
-        if self.history_index > 0 {
-            self.history_index -= 1;
-            self.history.get(self.history_index).cloned()
+        if self.history_index >= 2 {
+            self.history_index -= 2;
+
+            let track = self.history.get(self.history_index).cloned();
+            self.history_index += 1;
+
+            if let Some(ref t) = track {
+                if let Some(index) =
+                    self.queue.iter().position(|q| q.id == t.id)
+                {
+                    self.current_track_index = index;
+                }
+            }
+
+            self.is_first_play = false;
+
+            track
         } else {
             None
         }
@@ -233,6 +247,9 @@ impl QueueManager {
             if let Some(t) = &track {
                 self.add_to_history(t.clone());
             }
+
+            self.is_first_play = false;
+
             track
         } else {
             None
