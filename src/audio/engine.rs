@@ -33,6 +33,7 @@ pub struct AudioPlayer {
     pub is_muted: bool,
 
     pub track_progress: Arc<TrackProgress>,
+    pub is_ready: Arc<AtomicBool>,
     pub is_playing: Arc<AtomicBool>,
     pub current_playback_task: Option<tokio::task::JoinHandle<()>>,
     pub playback_generation: Arc<AtomicU64>,
@@ -60,6 +61,7 @@ impl AudioPlayer {
             is_muted: false,
 
             track_progress: Arc::new(TrackProgress::default()),
+            is_ready: Arc::new(AtomicBool::new(false)),
             is_playing: Arc::new(AtomicBool::new(false)),
             current_playback_task: None,
             playback_generation: Arc::new(AtomicU64::new(0)),
@@ -91,12 +93,15 @@ impl AudioPlayer {
             task.abort();
         }
 
+        self.is_ready.store(false, Ordering::Relaxed);
+
         let generation =
             self.playback_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let playback_generation = self.playback_generation.clone();
         let api = self.api.clone();
         let sink = self.sink.clone();
         let track_progress = self.track_progress.clone();
+        let ready = self.is_ready.clone();
         let playing = self.is_playing.clone();
         let event_tx = self.event_tx.clone();
         let track_clone = track.clone();
@@ -129,6 +134,7 @@ impl AudioPlayer {
             }
 
             sink.append(decoder);
+            ready.store(true, Ordering::Relaxed);
             playing.store(true, Ordering::Relaxed);
         }));
 
@@ -136,6 +142,7 @@ impl AudioPlayer {
     }
 
     pub fn stop_track(&mut self) {
+        self.is_ready.store(false, Ordering::Relaxed);
         self.is_playing.store(false, Ordering::Relaxed);
         self.sink.stop();
         if let Some(task) = &self.current_playback_task {
@@ -177,6 +184,10 @@ impl AudioPlayer {
     }
 
     pub fn seek_backwards(&mut self, seconds: u64) {
+        if !self.is_ready.load(Ordering::Relaxed) {
+            return;
+        }
+
         self.sink.pause();
         let _ = self.sink.try_seek(
             self.sink
@@ -187,6 +198,10 @@ impl AudioPlayer {
     }
 
     pub fn seek_forwards(&mut self, seconds: u64) {
+        if !self.is_ready.load(Ordering::Relaxed) {
+            return;
+        }
+
         self.sink.pause();
         let _ = self.sink.try_seek(
             self.sink
