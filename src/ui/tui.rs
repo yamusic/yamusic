@@ -69,40 +69,37 @@ impl Tui {
 
     pub fn start(&mut self) {
         let event_tx = self.event_tx.clone();
-        thread::spawn(move || {
-            event_tx.send(TerminalEvent::Init).unwrap();
-            loop {
-                let _ = event_tx.send(TerminalEvent::Tick);
-                if !event::poll(Duration::from_millis(16)).unwrap() {
-                    continue;
-                }
-                let crossterm_event = event::read();
-                match crossterm_event {
-                    Ok(evt) => match evt {
-                        CrosstermEvent::Key(key) => {
-                            if key.kind == KeyEventKind::Press {
-                                let _ = event_tx.send(TerminalEvent::Key(key));
-                            }
+        thread::spawn(move || loop {
+            let _ = event_tx.send(TerminalEvent::Tick);
+            if !event::poll(Duration::from_millis(16)).unwrap() {
+                continue;
+            }
+            let crossterm_event = event::read();
+            match crossterm_event {
+                Ok(evt) => match evt {
+                    CrosstermEvent::Key(key) => {
+                        if key.kind == KeyEventKind::Press {
+                            let _ = event_tx.send(TerminalEvent::Key(key));
                         }
-                        CrosstermEvent::Mouse(mouse) => {
-                            let _ = event_tx.send(TerminalEvent::Mouse(mouse));
-                        }
-                        CrosstermEvent::Resize(x, y) => {
-                            let _ = event_tx.send(TerminalEvent::Resize(x, y));
-                        }
-                        CrosstermEvent::FocusLost => {
-                            let _ = event_tx.send(TerminalEvent::FocusLost);
-                        }
-                        CrosstermEvent::FocusGained => {
-                            let _ = event_tx.send(TerminalEvent::FocusGained);
-                        }
-                        CrosstermEvent::Paste(s) => {
-                            let _ = event_tx.send(TerminalEvent::Paste(s));
-                        }
-                    },
-                    Err(_) => {
-                        let _ = event_tx.send(TerminalEvent::Error);
                     }
+                    CrosstermEvent::Mouse(mouse) => {
+                        let _ = event_tx.send(TerminalEvent::Mouse(mouse));
+                    }
+                    CrosstermEvent::Resize(x, y) => {
+                        let _ = event_tx.send(TerminalEvent::Resize(x, y));
+                    }
+                    CrosstermEvent::FocusLost => {
+                        let _ = event_tx.send(TerminalEvent::FocusLost);
+                    }
+                    CrosstermEvent::FocusGained => {
+                        let _ = event_tx.send(TerminalEvent::FocusGained);
+                    }
+                    CrosstermEvent::Paste(s) => {
+                        let _ = event_tx.send(TerminalEvent::Paste(s));
+                    }
+                },
+                Err(_) => {
+                    let _ = event_tx.send(TerminalEvent::Error);
                 }
             }
         });
