@@ -105,20 +105,12 @@ impl AudioPlayer {
             let (url, codec, bitrate) =
                 api.fetch_track_url(track_clone.id).await.unwrap();
 
-            let stream = tokio::task::spawn_blocking(move || {
-                AudioStreamer::new(url, 256 * 1024)
-            })
-            .await
-            .unwrap()
-            .unwrap();
+            let stream = AudioStreamer::new(url, 256 * 1024, 256 * 1024)
+                .await
+                .unwrap();
 
             let total_bytes = stream.total_bytes;
-            let decoder = if codec == "mp3" {
-                Decoder::new_mp3(stream)
-            } else {
-                Decoder::new_aac(stream)
-            }
-            .unwrap();
+            let decoder = Decoder::new(stream).unwrap();
 
             if playback_generation.load(Ordering::SeqCst) != generation {
                 return;
