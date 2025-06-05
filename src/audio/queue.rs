@@ -72,7 +72,7 @@ impl QueueManager {
                 self.queue.push(tracks[start_index].clone());
                 self.current_track_index = 0;
 
-                let track_id = tracks[start_index].id;
+                let track_id = tracks[start_index].id.clone();
                 let similar_tracks = self
                     .api
                     .fetch_similar_tracks(track_id)
@@ -187,8 +187,10 @@ impl QueueManager {
                 self.current_track_index = 0;
             }
         } else if let Some(original_queue) = self.original_queue.take() {
-            let current_track_id =
-                self.queue.get(self.current_track_index).map(|t| t.id);
+            let current_track_id = self
+                .queue
+                .get(self.current_track_index)
+                .map(|t| t.id.clone());
 
             self.queue = original_queue;
 
