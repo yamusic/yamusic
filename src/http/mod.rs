@@ -63,7 +63,7 @@ impl ApiService {
 
     pub async fn fetch_tracks(
         &self,
-        track_ids: Vec<i32>,
+        track_ids: Vec<String>,
     ) -> color_eyre::Result<Vec<Track>> {
         Ok(self.client.get_tracks(&track_ids, true).await?)
     }
@@ -74,13 +74,16 @@ impl ApiService {
     ) -> color_eyre::Result<Vec<Track>> {
         Ok(self
             .client
-            .get_tracks(&tracks.iter().map(|t| t.id).collect::<Vec<_>>(), true)
+            .get_tracks(
+                &tracks.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+                true,
+            )
             .await?)
     }
 
     pub async fn fetch_similar_tracks(
         &self,
-        track_id: i32,
+        track_id: String,
     ) -> color_eyre::Result<Vec<Track>> {
         Ok(self
             .client
@@ -91,7 +94,7 @@ impl ApiService {
 
     pub async fn fetch_track_url(
         &self,
-        track_id: i32,
+        track_id: String,
     ) -> color_eyre::Result<(String, String, i32)> {
         let download_info =
             self.client.get_track_download_info(track_id).await?;
