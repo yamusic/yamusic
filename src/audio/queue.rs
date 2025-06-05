@@ -46,7 +46,7 @@ impl QueueManager {
         }
     }
 
-    pub async fn play(
+    pub async fn load(
         &mut self,
         context: PlaybackContext,
         tracks: Vec<Track>,

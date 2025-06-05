@@ -101,9 +101,10 @@ impl AudioPlayer {
         let event_tx = self.event_tx.clone();
         let track_clone = track.clone();
 
-        self.current_playback_task = Some(tokio::spawn(async move {
+        self.current_playback_task = Some(tokio::task::spawn(async move {
             let (url, codec, bitrate) =
                 api.fetch_track_url(track_clone.id).await.unwrap();
+
             let stream = tokio::task::spawn_blocking(move || {
                 AudioStreamer::new(url, 256 * 1024)
             })
