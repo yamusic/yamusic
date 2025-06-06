@@ -52,7 +52,6 @@ impl App {
             EventHandler::handle_events(self, &tui).await?;
         }
 
-        tui.exit()?;
         Ok(())
     }
 
