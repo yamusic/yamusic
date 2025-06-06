@@ -1367,6 +1367,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-derive"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1375,6 +1385,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
 ]
 
 [[package]]
@@ -1806,15 +1836,16 @@ dependencies = [
 
 [[package]]
 name = "rodio"
-version = "0.19.0"
-source = "git+https://github.com/vyfor/rodio.git?rev=6664a7b#6664a7b4bad161f87712ddfad36504cdb6944f01"
+version = "0.20.1"
+source = "git+https://github.com/RustAudio/rodio?rev=5df626a#5df626a204566dbc8713b3c55bedc9124d21503a"
 dependencies = [
  "claxon",
  "cpal",
+ "dasp_sample",
  "hound",
  "lewton",
+ "num-rational",
  "symphonia",
- "thiserror 1.0.61",
 ]
 
 [[package]]
