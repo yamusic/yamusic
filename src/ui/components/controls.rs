@@ -1,12 +1,12 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style, Stylize},
+    style::{Style, Stylize},
     symbols::{self, border},
     text::{Line, ToSpan},
     widgets::{Block, Borders, Gauge, Paragraph, Widget},
 };
 
-use crate::audio::enums::RepeatMode;
+use crate::{audio::enums::RepeatMode, util::colors};
 
 pub struct PlayerControlsWidget {
     repeat_mode: RepeatMode,
@@ -37,14 +37,14 @@ impl Widget for PlayerControlsWidget {
         Self: Sized,
     {
         let repeat_icon = match self.repeat_mode {
-            RepeatMode::None => "󰑗".fg(Color::from_u32(0x00464646)),
-            RepeatMode::Single => "󰑘".fg(Color::from_u32(0x00f7d44b)),
-            RepeatMode::All => "󰑖".fg(Color::from_u32(0x00f7d44b)),
+            RepeatMode::None => "󰑗".fg(colors::NEUTRAL),
+            RepeatMode::Single => "󰑘".fg(colors::PRIMARY),
+            RepeatMode::All => "󰑖".fg(colors::PRIMARY),
         };
         let shuffle_icon = if self.shuffle_mode {
-            "󰒟".fg(Color::from_u32(0x00f7d44b))
+            "󰒟".fg(colors::PRIMARY)
         } else {
-            "󰒞".fg(Color::from_u32(0x00464646))
+            "󰒞".fg(colors::NEUTRAL)
         };
 
         let mut controls_text = Line::default();
@@ -78,15 +78,15 @@ impl Widget for PlayerControlsWidget {
             (
                 self.volume as f64 / 100.0,
                 None,
-                Color::from_u32(0x00f7d44b),
-                Color::from_u32(0x00464646),
+                colors::PRIMARY,
+                colors::NEUTRAL,
             )
         } else {
             (
                 (self.volume - 100) as f64 / 100.0,
-                Some(Color::from_u32(0x00464646)),
-                Color::from_u32(0x009D8400),
-                Color::from_u32(0x00f7d44b),
+                Some(colors::NEUTRAL),
+                colors::SECONDARY,
+                colors::PRIMARY,
             )
         };
 
