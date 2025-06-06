@@ -1,7 +1,7 @@
 [package]
 authors = ["vyfor"]
 categories = ["command-line-utilities", "multimedia", "multimedia::audio"]
-description = "Yandex Music for the terminal"
+description = "Yandex Music for the Terminal"
 edition = "2024"
 keywords = ["yandex", "music", "tui", "cli", "audio-player"]
 license = "Apache-2.0"
