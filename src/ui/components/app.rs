@@ -13,7 +13,7 @@ impl Widget for &App {
     where
         Self: Sized,
     {
-        buf.set_style(area, Style::new().bg(Color::from_u32(0x00181818)));
+        buf.set_style(area, Style::new().bg(Color::from_u32(0x000d0d0d)));
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
