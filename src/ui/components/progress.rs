@@ -3,12 +3,12 @@ use std::time::Duration;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    style::{Color, Style},
+    style::Style,
     symbols::{self, border},
     widgets::{Block, Borders, Gauge, Widget},
 };
 
-use crate::audio::progress::TrackProgress;
+use crate::{audio::progress::TrackProgress, util::colors};
 
 pub struct ProgressWidget<'a> {
     progress: &'a TrackProgress,
@@ -71,9 +71,7 @@ impl<'a> Widget for ProgressWidget<'a> {
                     }),
             )
             .gauge_style(
-                Style::default()
-                    .fg(Color::from_u32(0x00f7d44b))
-                    .bg(Color::from_u32(0x00464646)),
+                Style::default().fg(colors::PRIMARY).bg(colors::NEUTRAL),
             )
             .ratio(percent.min(1.0))
             .label(duration_info);

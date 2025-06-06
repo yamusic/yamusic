@@ -1,19 +1,22 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     symbols::{self, border},
     widgets::{Block, Borders, Widget},
 };
 
-use crate::ui::{app::App, components::player::PlayerWidget};
+use crate::{
+    ui::{app::App, components::player::PlayerWidget},
+    util::colors,
+};
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
     {
-        buf.set_style(area, Style::new().bg(Color::from_u32(0x000d0d0d)));
+        buf.set_style(area, Style::new().bg(colors::BACKGROUND));
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
