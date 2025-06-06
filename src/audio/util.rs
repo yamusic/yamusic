@@ -1,9 +1,9 @@
 use rodio::{
+    Device, DeviceTrait, OutputStream, OutputStreamBuilder, Sink,
     cpal::{
-        default_host, traits::HostTrait, BufferSize, SampleFormat, SampleRate,
-        StreamConfig,
+        BufferSize, SampleFormat, SampleRate, StreamConfig, default_host,
+        traits::HostTrait,
     },
-    Device, DeviceTrait, OutputStream, Sink,
 };
 
 pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
@@ -36,13 +36,18 @@ pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
 }
 
 pub fn construct_sink(
-    device: &Device,
+    device: Device,
     config: &StreamConfig,
-    sample_format: &SampleFormat,
+    sample_format: SampleFormat,
 ) -> color_eyre::Result<(OutputStream, Sink)> {
-    let (stream, stream_handle) =
-        OutputStream::try_from_device_config(device, config, sample_format)?;
-    let sink = Sink::try_new(&stream_handle)?;
+    let stream = OutputStreamBuilder::default()
+        .with_buffer_size(config.buffer_size)
+        .with_sample_rate(config.sample_rate.0)
+        .with_device(device)
+        .with_sample_format(sample_format)
+        .open_stream_or_fallback()?;
+    let mixer = stream.mixer();
+    let sink = Sink::connect_new(mixer);
 
     Ok((stream, sink))
 }

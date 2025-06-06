@@ -20,16 +20,11 @@ ratatui = "0.29"
 crossterm = "0.29"
 
 # Audio
-rodio = { git = "https://github.com/vyfor/rodio.git", rev = "6664a7b", features = [
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "5df626a", features = [
   "symphonia-aac",
   "symphonia-mp3",
 ] }
 yandex-music = "0.2.11"
-# rodio = { version = "0.19", features = [
-#   "symphonia-aac",
-#   "symphonia-isomp4",
-#   "symphonia-mp3",
-# ] }
 
 # Logging
 tracing-error = "0.2"

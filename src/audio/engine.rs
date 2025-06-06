@@ -1,7 +1,7 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::Duration,
@@ -14,7 +14,7 @@ use crate::{
     stream::streamer::AudioStreamer,
 };
 use flume::Sender;
-use rodio::{cpal::StreamConfig, Decoder, OutputStream, Sink, Source};
+use rodio::{Decoder, OutputStream, Sink, Source, cpal::StreamConfig};
 use tracing::info;
 use yandex_music::model::track_model::track::Track;
 
@@ -46,7 +46,7 @@ impl AudioPlayer {
     ) -> color_eyre::Result<Self> {
         let (device, stream_config, sample_format) = setup_device_config();
         let (stream, sink) =
-            construct_sink(&device, &stream_config, &sample_format)?;
+            construct_sink(device, &stream_config, sample_format)?;
 
         let player = Self {
             api,
@@ -71,16 +71,18 @@ impl AudioPlayer {
         let sink = player.sink.clone();
         let event_tx = player.event_tx.clone();
         let playing = player.is_playing.clone();
-        thread::spawn(move || loop {
-            progress.set_current_position(sink.get_pos());
-            let is_playing = playing.load(Ordering::Relaxed);
+        thread::spawn(move || {
+            loop {
+                progress.set_current_position(sink.get_pos());
+                let is_playing = playing.load(Ordering::Relaxed);
 
-            if is_playing && sink.empty() {
-                playing.store(false, Ordering::Relaxed);
-                let _ = event_tx.send(Event::TrackEnded);
+                if is_playing && sink.empty() {
+                    playing.store(false, Ordering::Relaxed);
+                    let _ = event_tx.send(Event::TrackEnded);
+                }
+
+                thread::sleep(Duration::from_secs(1));
             }
-
-            thread::sleep(Duration::from_secs(1));
         });
 
         Ok(player)
