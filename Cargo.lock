@@ -3044,24 +3044,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791978798f0597cfc70478424c2b4fdc2b7a8024aaff78497ef00f24ef674193"
 
 [[package]]
-name = "yandex-music"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f3c9d9bf899e46904364a97ff7c7f00f738ee6f9e80c32c57a9a75d1ff6e3dc"
-dependencies = [
- "base64",
- "hmac",
- "md5",
- "reqwest",
- "serde",
- "serde-xml-rs",
- "serde_json",
- "sha2",
- "url",
-]
-
-[[package]]
-name = "yatui"
+name = "yamusic"
 version = "0.0.1"
 dependencies = [
  "anyhow",
@@ -3081,6 +3064,23 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "yandex-music",
+]
+
+[[package]]
+name = "yandex-music"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3c9d9bf899e46904364a97ff7c7f00f738ee6f9e80c32c57a9a75d1ff6e3dc"
+dependencies = [
+ "base64",
+ "hmac",
+ "md5",
+ "reqwest",
+ "serde",
+ "serde-xml-rs",
+ "serde_json",
+ "sha2",
+ "url",
 ]
 
 [[package]]
