@@ -99,11 +99,11 @@ impl QueueManager {
         }
 
         // If queue looping is enabled with the context being unclear, disable queue looping
-        if matches!(self.repeat_mode, RepeatMode::All) {
-            if let PlaybackContext::Unknown = self.playback_context {
-                self.repeat_mode = RepeatMode::None;
-                return None;
-            }
+        if self.repeat_mode == RepeatMode::All
+            && let PlaybackContext::Unknown = self.playback_context
+        {
+            self.repeat_mode = RepeatMode::None;
+            return None;
         }
 
         if self.is_first_play {
@@ -115,10 +115,10 @@ impl QueueManager {
             return track;
         }
 
-        if let RepeatMode::Single = self.repeat_mode {
-            if let Some(track) = self.queue.get(self.current_track_index) {
-                return Some(track.clone());
-            }
+        if let RepeatMode::Single = self.repeat_mode
+            && let Some(track) = self.queue.get(self.current_track_index)
+        {
+            return Some(track.clone());
         }
 
         let mut next_track_index = self.current_track_index + 1;
@@ -155,12 +155,11 @@ impl QueueManager {
             let track = self.history.get(self.history_index).cloned();
             self.history_index += 1;
 
-            if let Some(ref t) = track {
-                if let Some(index) =
+            if let Some(ref t) = track
+                && let Some(index) =
                     self.queue.iter().position(|q| q.id == t.id)
-                {
-                    self.current_track_index = index;
-                }
+            {
+                self.current_track_index = index;
             }
 
             self.is_first_play = false;
