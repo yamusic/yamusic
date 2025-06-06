@@ -1,5 +1,5 @@
 use super::enums::RepeatMode;
-use crate::{http::ApiService, util::utils::random};
+use crate::http::ApiService;
 use rand::{rng, seq::SliceRandom};
 use std::sync::Arc;
 use yandex_music::model::{
@@ -121,14 +121,7 @@ impl QueueManager {
             return Some(track.clone());
         }
 
-        let mut next_track_index = self.current_track_index + 1;
-
-        if self.is_shuffled {
-            let len = self.queue.len();
-            if len > 0 {
-                next_track_index = random(0, len as i32 - 1) as usize;
-            }
-        }
+        let next_track_index = self.current_track_index + 1;
 
         if next_track_index >= self.queue.len() {
             if let RepeatMode::All = self.repeat_mode {
