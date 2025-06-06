@@ -1,6 +1,6 @@
 # YaMusic
 
-A terminal-based client for Yandex Music. Not affiliated with Yandex in any way.
+A terminal-based client for Yandex Music. Not affiliated with Yandex in any way. A work-in-progress.
 
 ## Disclaimer
 
