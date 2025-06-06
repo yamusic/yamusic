@@ -1,4 +1,4 @@
-use yatui::{
+use yamusic::{
     ui::app::App,
     util::{hook::set_panic_hook, log::initialize_logging},
 };

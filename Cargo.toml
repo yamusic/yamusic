@@ -2,11 +2,11 @@
 authors = ["vyfor"]
 categories = ["command-line-utilities", "multimedia", "multimedia::audio"]
 description = "Yandex Music for the terminal"
-edition = "2021"
+edition = "2024"
 keywords = ["yandex", "music", "tui", "cli", "audio-player"]
 license = "Apache-2.0"
-name = "yatui"
-repository = "https://github.com/vyfor/yatui"
+name = "yamusic"
+repository = "https://github.com/yamusic/yamusic"
 version = "0.0.1"
 
 [dependencies]
