@@ -16,7 +16,7 @@ use crate::{
 use flume::Sender;
 use rodio::{Decoder, OutputStream, Sink, Source, cpal::StreamConfig};
 use tracing::info;
-use yandex_music::model::track_model::track::Track;
+use yandex_music::model::track::Track;
 
 use super::progress::TrackProgress;
 
@@ -45,8 +45,7 @@ impl AudioPlayer {
         api: Arc<ApiService>,
     ) -> color_eyre::Result<Self> {
         let (device, stream_config, sample_format) = setup_device_config();
-        let (stream, sink) =
-            construct_sink(device, &stream_config, sample_format)?;
+        let (stream, sink) = construct_sink(device, &stream_config, sample_format)?;
 
         let player = Self {
             api,
@@ -97,8 +96,7 @@ impl AudioPlayer {
 
         self.is_ready.store(false, Ordering::Relaxed);
 
-        let generation =
-            self.playback_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.playback_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let playback_generation = self.playback_generation.clone();
         let api = self.api.clone();
         let sink = self.sink.clone();
@@ -109,10 +107,9 @@ impl AudioPlayer {
         let track_clone = track.clone();
 
         self.current_playback_task = Some(tokio::task::spawn(async move {
-            let (url, _codec, bitrate) =
-                api.fetch_track_url(track_clone.id.clone()).await.unwrap();
+            let (url, _codec, bitrate) = api.fetch_track_url(track_clone.id.clone()).await.unwrap();
 
-            let stream = AudioStreamer::new(url, 256 * 1024, 256 * 1024)
+            let stream = AudioStreamer::new(url, 16 * 1024, 256 * 1024)
                 .await
                 .unwrap();
 

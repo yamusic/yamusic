@@ -9,10 +9,10 @@ use crate::{
     http::ApiService,
 };
 use flume::Sender;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::Ordering};
 use yandex_music::model::{
-    playlist_model::playlist::{Playlist, TracksType},
-    track_model::track::Track,
+    playlist::{Playlist, TracksType},
+    track::Track,
 };
 
 pub struct AudioSystem {
@@ -23,10 +23,7 @@ pub struct AudioSystem {
 }
 
 impl AudioSystem {
-    pub async fn new(
-        event_tx: Sender<Event>,
-        api: Arc<ApiService>,
-    ) -> color_eyre::Result<Self> {
+    pub async fn new(event_tx: Sender<Event>, api: Arc<ApiService>) -> color_eyre::Result<Self> {
         let player = AudioPlayer::new(event_tx.clone(), api.clone()).await?;
         let queue = QueueManager::new(api.clone());
 
@@ -39,8 +36,15 @@ impl AudioSystem {
     }
 
     pub async fn init(&mut self) -> color_eyre::Result<()> {
-        let (playlist, tracks) = self.api.fetch_liked_tracks().await?;
-        let tracks = self.api.fetch_tracks_partial(&tracks).await?;
+        let playlist = self.api.fetch_liked_tracks().await?;
+        let tracks = match &playlist.tracks {
+            Some(TracksType::Full(tracks)) => tracks.clone(),
+            Some(TracksType::TrackWithInfo(tracks)) => {
+                tracks.iter().map(|t| t.track.clone()).collect()
+            }
+            Some(TracksType::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
+            None => vec![],
+        };
         let context = PlaybackContext::Playlist(playlist);
 
         if !tracks.is_empty() {
@@ -50,19 +54,14 @@ impl AudioSystem {
         Ok(())
     }
 
-    pub async fn play_playlist(
-        &mut self,
-        playlist: Playlist,
-    ) -> color_eyre::Result<()> {
+    pub async fn play_playlist(&mut self, playlist: Playlist) -> color_eyre::Result<()> {
         let tracks = match &playlist.tracks {
             Some(TracksType::Full(tracks)) => tracks.clone(),
             Some(TracksType::TrackWithInfo(tracks)) => {
                 tracks.iter().map(|t| t.track.clone()).collect()
             }
-            Some(TracksType::Partial(tracks)) => {
-                self.api.fetch_tracks_partial(tracks).await?
-            }
-            None => panic!("Playlist has no tracks. This should not happen."),
+            Some(TracksType::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
+            None => vec![],
         };
 
         if let Some(track) = self

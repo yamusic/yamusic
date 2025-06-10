@@ -24,7 +24,7 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev = "5df626a", features 
   "symphonia-aac",
   "symphonia-mp3",
 ] }
-yandex-music = "0.2.11"
+yandex-music = "0.3.1"
 
 # Logging
 tracing-error = "0.2"

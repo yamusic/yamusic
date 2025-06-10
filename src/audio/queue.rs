@@ -2,10 +2,7 @@ use super::enums::RepeatMode;
 use crate::http::ApiService;
 use rand::{rng, seq::SliceRandom};
 use std::sync::Arc;
-use yandex_music::model::{
-    album_model::album::Album, artist_model::artist::Artist,
-    playlist_model::playlist::Playlist, track_model::track::Track,
-};
+use yandex_music::model::{album::Album, artist::Artist, playlist::Playlist, track::Track};
 
 pub struct QueueManager {
     pub api: Arc<ApiService>,
@@ -149,8 +146,7 @@ impl QueueManager {
             self.history_index += 1;
 
             if let Some(ref t) = track
-                && let Some(index) =
-                    self.queue.iter().position(|q| q.id == t.id)
+                && let Some(index) = self.queue.iter().position(|q| q.id == t.id)
             {
                 self.current_track_index = index;
             }
@@ -193,9 +189,7 @@ impl QueueManager {
         if self.is_shuffled {
             self.original_queue = Some(self.queue.clone());
 
-            if !self.queue.is_empty()
-                && self.current_track_index < self.queue.len()
-            {
+            if !self.queue.is_empty() && self.current_track_index < self.queue.len() {
                 let current_track = self.queue.remove(self.current_track_index);
                 self.queue.shuffle(&mut rng());
                 self.queue.insert(self.current_track_index, current_track);
@@ -213,9 +207,7 @@ impl QueueManager {
 
             if let Some(track_id) = current_track_id {
                 // TODO: This assumes that the track_id is unique, which is not always the case
-                if let Some(new_index) =
-                    self.queue.iter().position(|t| t.id == track_id)
-                {
+                if let Some(new_index) = self.queue.iter().position(|t| t.id == track_id) {
                     self.current_track_index = new_index;
                 } else {
                     self.current_track_index = 0;

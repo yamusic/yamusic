@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use yandex_music::model::track_model::track::Track;
+use yandex_music::model::track::Track;
 
 #[allow(clippy::large_enum_variant)]
 pub enum Event {
