@@ -11,11 +11,10 @@ use crate::{
     audio::util::{construct_sink, setup_device_config},
     event::events::Event,
     http::ApiService,
-    stream::streamer::AudioStreamer,
+    stream,
 };
 use flume::Sender;
 use rodio::{Decoder, OutputStream, Sink, Source, cpal::StreamConfig};
-use tracing::info;
 use yandex_music::model::track::Track;
 
 use super::progress::TrackProgress;
@@ -70,6 +69,7 @@ impl AudioPlayer {
         let sink = player.sink.clone();
         let event_tx = player.event_tx.clone();
         let playing = player.is_playing.clone();
+
         thread::spawn(move || {
             loop {
                 progress.set_current_position(sink.get_pos());
@@ -80,7 +80,7 @@ impl AudioPlayer {
                     let _ = event_tx.send(Event::TrackEnded);
                 }
 
-                thread::sleep(Duration::from_secs(1));
+                thread::sleep(Duration::from_millis(1000 / 8));
             }
         });
 
@@ -107,34 +107,41 @@ impl AudioPlayer {
         let track_clone = track.clone();
 
         self.current_playback_task = Some(tokio::task::spawn(async move {
-            let (url, _codec, bitrate) = api.fetch_track_url(track_clone.id.clone()).await.unwrap();
+            let (url, codec, bitrate) = api.fetch_track_url(track_clone.id.clone()).await.unwrap();
+            track_progress.set_bitrate(bitrate.try_into().unwrap());
+            let progress = track_progress.clone();
 
-            let stream = AudioStreamer::new(url, 16 * 1024, 256 * 1024)
+            let streamer = stream::streamer::StreamingDataSource::new(url, progress)
                 .await
                 .unwrap();
+            let total_bytes = streamer.get_total_bytes();
 
-            let total_bytes = stream.total_bytes;
-            let decoder = Decoder::new(stream).unwrap();
+            let handle = tokio::task::spawn_blocking(move || {
+                let duration_secs = (total_bytes as f64 * 8.0) / bitrate as f64;
+                let decoder = Decoder::builder()
+                    .with_data(streamer)
+                    .with_hint(codec.as_str())
+                    .with_byte_len(((bitrate as f64 * duration_secs) / 8.0) as u64)
+                    .with_coarse_seek(true)
+                    .with_gapless(true)
+                    .build()
+                    .unwrap();
 
-            if playback_generation.load(Ordering::SeqCst) != generation {
-                return;
-            }
+                if playback_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
 
-            let _ = event_tx.send(Event::TrackChanged(track_clone.clone(), 0));
+                let _ = event_tx.send(Event::TrackStarted(track_clone.clone(), 0));
 
-            if let Some(total) = decoder.total_duration() {
-                track_progress.set_total_duration(total);
-            } else {
-                info!("total bytes: {}", total_bytes);
-                info!("bitrate: {}", bitrate);
-                track_progress.set_total_duration(Duration::from_secs_f64(
-                    (total_bytes * 8) as f64 / (bitrate * 1000) as f64,
-                ));
-            }
+                if let Some(total) = decoder.total_duration() {
+                    track_progress.set_total_duration(total);
+                }
 
-            sink.append(decoder);
-            ready.store(true, Ordering::Relaxed);
-            playing.store(true, Ordering::Relaxed);
+                sink.append(decoder);
+                ready.store(true, Ordering::Relaxed);
+                playing.store(true, Ordering::Relaxed);
+            });
+            handle.await.unwrap();
         }));
 
         self.current_track = Some(track);
@@ -143,6 +150,7 @@ impl AudioPlayer {
     pub fn stop_track(&mut self) {
         self.is_ready.store(false, Ordering::Relaxed);
         self.is_playing.store(false, Ordering::Relaxed);
+        self.track_progress.reset();
         self.sink.stop();
         if let Some(task) = &self.current_playback_task {
             task.abort();
