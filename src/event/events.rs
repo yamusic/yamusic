@@ -6,9 +6,8 @@ use yandex_music::model::track::Track;
 pub enum Event {
     // Events
     Initialize,
-    TracksFetched(Vec<Track>),
+    TrackStarted(Track, usize),
     TrackEnded,
-    TrackChanged(Track, usize),
 
     // Commands
     Play(i32),
