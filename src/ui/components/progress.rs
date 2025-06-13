@@ -1,14 +1,13 @@
-use std::time::Duration;
-
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    style::Style,
+    style::{Color, Style, Stylize},
     symbols::{self, border},
-    widgets::{Block, Borders, Gauge, Widget},
+    text::ToSpan,
+    widgets::{Block, Borders, Widget},
 };
 
-use crate::{audio::progress::TrackProgress, util::colors};
+use crate::{audio::progress::TrackProgress, ui::components::gauge::CustomGauge, util::colors};
 
 pub struct ProgressWidget<'a> {
     progress: &'a TrackProgress,
@@ -36,8 +35,8 @@ impl<'a> ProgressWidget<'a> {
 impl<'a> Widget for ProgressWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let (current, total) = self.progress.get_progress();
-        let percent = if total.as_secs() > 0 {
-            current.as_secs_f64() / total.as_secs_f64()
+        let percent = if total > 0 {
+            current as f64 / total as f64
         } else {
             0.0
         };
@@ -51,13 +50,11 @@ impl<'a> Widget for ProgressWidget<'a> {
             track_info = format!("{track_info} by {artist}");
         }
 
-        let duration_info = format!(
-            "{} / {}",
-            format_duration(current),
-            format_duration(total)
-        );
+        let duration_info = format!("{} / {}", format_duration(current), format_duration(total));
 
-        let gauge = Gauge::default()
+        let buffered_ratio = self.progress.get_buffered_ratio();
+
+        let gauge = CustomGauge::default()
             .block(
                 Block::default()
                     .title_top(track_info)
@@ -70,18 +67,27 @@ impl<'a> Widget for ProgressWidget<'a> {
                         ..symbols::border::ROUNDED
                     }),
             )
-            .gauge_style(
-                Style::default().fg(colors::PRIMARY).bg(colors::NEUTRAL),
+            .ratios(percent.min(1.0), buffered_ratio.min(1.0))
+            .label(duration_info.to_span().fg(Color::White))
+            .played_style(Style::default().fg(colors::PRIMARY).bg(colors::SECONDARY))
+            .buffered_style(
+                Style::default()
+                    .fg(colors::SECONDARY)
+                    .bg(colors::BACKGROUND),
             )
-            .ratio(percent.min(1.0))
-            .label(duration_info);
+            .remaining_style(
+                Style::default()
+                    .fg(colors::BACKGROUND)
+                    .bg(colors::BACKGROUND),
+            )
+            .use_unicode(true);
 
         gauge.render(area, buf);
     }
 }
 
-fn format_duration(duration: Duration) -> String {
-    let total_seconds = duration.as_secs();
+fn format_duration(duration: u64) -> String {
+    let total_seconds = duration / 1000;
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{minutes:02}:{seconds:02}")
