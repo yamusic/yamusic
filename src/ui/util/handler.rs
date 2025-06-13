@@ -12,10 +12,7 @@ use crate::{
 pub struct EventHandler;
 
 impl EventHandler {
-    pub async fn handle_events(
-        app: &mut App,
-        tui: &Tui,
-    ) -> color_eyre::Result<()> {
+    pub async fn handle_events(app: &mut App, tui: &Tui) -> color_eyre::Result<()> {
         if let Some(evt) = tui.next().await {
             Self::handle_event(app, evt).await?;
         }
@@ -27,10 +24,7 @@ impl EventHandler {
         Ok(())
     }
 
-    pub async fn handle_event(
-        app: &mut App,
-        evt: TerminalEvent,
-    ) -> color_eyre::Result<()> {
+    pub async fn handle_event(app: &mut App, evt: TerminalEvent) -> color_eyre::Result<()> {
         match evt {
             TerminalEvent::Init => app.audio_system.init().await?,
             TerminalEvent::Quit => app.should_quit = true,
@@ -53,7 +47,7 @@ impl EventHandler {
             Event::TrackEnded => {
                 app.audio_system.on_track_ended().await;
             }
-            Event::TrackChanged(_track, _index) => {}
+            Event::TrackStarted(_track, _index) => {}
             _ => {}
         }
     }
