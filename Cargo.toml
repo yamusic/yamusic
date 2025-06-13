@@ -11,34 +11,35 @@ version = "0.0.1"
 
 [dependencies]
 # Core 
-tokio = { version = "1.45", features = ["full"] }
+tokio = { version = "1.45.1", features = ["full"] }
 tokio-util = "0.7"
-reqwest = { version = "0.12", features = ["blocking"] }
+reqwest = { version = "0.12.20" }
 
 # TUI
-ratatui = "0.29"
-crossterm = "0.29"
+ratatui = { version = "0.29.0", features = ["unstable-widget-ref"] }
+crossterm = "0.29.0"
 
 # Audio
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "5df626a", features = [
-  "symphonia-aac",
-  "symphonia-mp3",
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "5df626a", default-features = false, features = [
+  "playback",
+  "symphonia-all",
+  "tracing",
 ] }
 yandex-music = "0.3.1"
 
 # Logging
-tracing-error = "0.2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-color-eyre = "0.6"
-directories = "6.0"
+tracing-error = "0.2.1"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+color-eyre = "0.6.5"
+directories = "6.0.0"
 
 # Utilities
-anyhow = "1.0"
-dotenv = "0.15"
+flume = "0.11.1"
+anyhow = "1.0.98"
+dotenv = "0.15.0"
 lazy_static = "1.5.0"
-flume = { version = "0.11" }
-rand = "0.9"
+rand = "0.9.1"
 
 [profile.inc]
 inherits = "release"
