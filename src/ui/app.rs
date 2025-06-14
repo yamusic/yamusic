@@ -4,9 +4,7 @@ use flume::{Receiver, Sender};
 
 use ratatui::Frame;
 
-use crate::{
-    audio::system::AudioSystem, event::events::Event, http::ApiService,
-};
+use crate::{audio::system::AudioSystem, event::events::Event, http::ApiService};
 
 use super::{
     tui::{self, TerminalEvent},
@@ -26,8 +24,7 @@ impl App {
     pub async fn new() -> color_eyre::Result<Self> {
         let (event_tx, event_rx) = flume::unbounded();
         let api = Arc::new(ApiService::new().await?);
-        let audio_system =
-            AudioSystem::new(event_tx.clone(), api.clone()).await?;
+        let audio_system = AudioSystem::new(event_tx.clone(), api.clone()).await?;
 
         Ok(Self {
             event_rx,
@@ -40,7 +37,7 @@ impl App {
     }
 
     pub async fn run(&mut self) -> color_eyre::Result<()> {
-        let mut tui = tui::Tui::new()?;
+        let mut tui = tui::Tui::new()?.mouse(true);
         tui.enter()?;
 
         EventHandler::handle_event(self, TerminalEvent::Init).await?;
