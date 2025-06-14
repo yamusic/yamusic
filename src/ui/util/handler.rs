@@ -1,4 +1,6 @@
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 
 use crate::{
     event::events::Event,
@@ -31,6 +33,7 @@ impl EventHandler {
             TerminalEvent::FocusGained => app.has_focus = true,
             TerminalEvent::FocusLost => app.has_focus = false,
             TerminalEvent::Key(key) => Self::handle_key_event(app, key).await,
+            TerminalEvent::Mouse(mouse) => Self::handle_mouse_event(app, mouse),
             _ => {}
         }
 
@@ -70,6 +73,16 @@ impl EventHandler {
                 KeyCode::Char('s') => app.audio_system.toggle_shuffle(),
                 KeyCode::Char('m') => app.audio_system.toggle_mute(),
             }
+        }
+    }
+
+    fn handle_mouse_event(app: &mut App, evt: MouseEvent) {
+        match (evt.kind, evt.modifiers) {
+            (MouseEventKind::ScrollUp, KeyModifiers::SHIFT) => app.audio_system.seek_forwards(1),
+            (MouseEventKind::ScrollUp, _) => app.audio_system.volume_up(1),
+            (MouseEventKind::ScrollDown, KeyModifiers::SHIFT) => app.audio_system.seek_backwards(1),
+            (MouseEventKind::ScrollDown, _) => app.audio_system.volume_down(1),
+            _ => {}
         }
     }
 }
