@@ -8,7 +8,10 @@ use std::{
 };
 
 use crate::{
-    audio::util::{construct_sink, setup_device_config},
+    audio::{
+        fx::FxSource,
+        util::{construct_sink, setup_device_config},
+    },
     event::events::Event,
     http::ApiService,
     stream,
@@ -137,7 +140,8 @@ impl AudioPlayer {
                     track_progress.set_total_duration(total);
                 }
 
-                sink.append(decoder);
+                let source = FxSource::new(decoder);
+                sink.append(source);
                 ready.store(true, Ordering::Relaxed);
                 playing.store(true, Ordering::Relaxed);
             });
