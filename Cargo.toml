@@ -8,6 +8,7 @@ license = "Apache-2.0"
 name = "yamusic"
 repository = "https://github.com/yamusic/yamusic"
 version = "0.0.1"
+readme = "README.md"
 
 [dependencies]
 # Core 
