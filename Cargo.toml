@@ -12,21 +12,23 @@ version = "0.0.1"
 [dependencies]
 # Core 
 tokio = { version = "1.45.1", features = ["full"] }
-tokio-util = "0.7"
-reqwest = { version = "0.12.20" }
+reqwest = { version = "0.12.20", features = ["blocking"] }
 
 # TUI
 ratatui = { version = "0.29.0", features = ["unstable-widget-ref"] }
 crossterm = "0.29.0"
 
 # Audio
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "5df626a", default-features = false, features = [
+rodio = { version = "0.21.1", default-features = false, features = [
   "playback",
   "symphonia-all",
   "tracing",
 ] }
-yandex-music = "0.3.1"
 
+yandex-music = "0.4.0"
+
+# Utilities
+unicode-width = "0.1"
 # Logging
 tracing-error = "0.2.1"
 tracing = "0.1.41"
@@ -36,10 +38,10 @@ directories = "6.0.0"
 
 # Utilities
 flume = "0.11.1"
-anyhow = "1.0.98"
 dotenv = "0.15.0"
 lazy_static = "1.5.0"
 rand = "0.9.1"
+crossbeam-channel = "0.5.15"
 
 [profile.inc]
 inherits = "release"
