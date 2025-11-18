@@ -1,0 +1,269 @@
+use crate::audio::progress::TrackProgress;
+use color_eyre::{eyre::eyre, Result};
+use crossbeam_channel::{bounded as cb_bounded, Receiver as CbReceiver, Sender as CbSender, TryRecvError};
+use flume::{Receiver, Sender};
+use rodio::{Decoder, Source};
+use std::collections::VecDeque;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::Duration;
+
+use super::data_source::StreamingDataSource;
+
+const PCM_CHUNK_SAMPLES: usize = 8192;
+const SAMPLE_CHANNEL_CAPACITY: usize = 32;
+
+enum SampleMessage {
+    Samples(Vec<f32>, u64),
+    Finished(u64),
+}
+
+enum DecoderCommand {
+    Seek { position: Duration, generation: u64 },
+    Stop,
+}
+
+#[derive(Clone)]
+pub struct StreamController {
+    cmd_tx: Sender<DecoderCommand>,
+    generation: Arc<AtomicU64>,
+}
+
+impl StreamController {
+    pub fn seek(&self, position: Duration) {
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = self
+            .cmd_tx
+            .send(DecoderCommand::Seek { position, generation });
+    }
+
+    pub fn stop(&self) {
+        let _ = self.cmd_tx.send(DecoderCommand::Stop);
+    }
+}
+
+pub struct BufferedStreamingSource {
+    rx: CbReceiver<SampleMessage>,
+    pending_samples: VecDeque<f32>,
+    pending_generation: u64,
+    generation: Arc<AtomicU64>,
+    sample_rate: u32,
+    channels: u16,
+    total_duration: Option<Duration>,
+    finished_generation: Option<u64>,
+    controller: StreamController,
+}
+
+impl BufferedStreamingSource {
+    fn new(
+        rx: CbReceiver<SampleMessage>,
+        generation: Arc<AtomicU64>,
+        sample_rate: u32,
+        channels: u16,
+        total_duration: Option<Duration>,
+        controller: StreamController,
+    ) -> Self {
+        let pending_generation = generation.load(Ordering::SeqCst);
+        Self {
+            rx,
+            pending_samples: VecDeque::new(),
+            pending_generation,
+            generation,
+            sample_rate,
+            channels,
+            total_duration,
+            finished_generation: None,
+            controller,
+        }
+    }
+}
+
+impl Iterator for BufferedStreamingSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        let current_generation = self.generation.load(Ordering::SeqCst);
+        if self.pending_generation != current_generation {
+            self.pending_generation = current_generation;
+            self.pending_samples.clear();
+            self.finished_generation = None;
+        }
+
+        if let Some(sample) = self.pending_samples.pop_front() {
+            return Some(sample);
+        }
+
+        loop {
+            match self.rx.try_recv() {
+                Ok(SampleMessage::Samples(chunk, packet_generation)) => {
+                    if packet_generation != current_generation {
+                        continue;
+                    }
+                    self.pending_samples = chunk.into();
+                    if let Some(sample) = self.pending_samples.pop_front() {
+                        return Some(sample);
+                    }
+                }
+                Ok(SampleMessage::Finished(packet_generation)) => {
+                    if packet_generation == current_generation {
+                        self.finished_generation = Some(packet_generation);
+                        if self.pending_samples.is_empty() {
+                            return None;
+                        }
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    if self.finished_generation == Some(current_generation) {
+                        return None;
+                    }
+                    return Some(0.0);
+                }
+                Err(TryRecvError::Disconnected) => return None,
+            }
+        }
+    }
+}
+
+impl Source for BufferedStreamingSource {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.total_duration
+    }
+
+    fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
+        self.pending_samples.clear();
+        self.finished_generation = None;
+        self.controller.seek(pos);
+        Ok(())
+    }
+}
+
+pub struct StreamingSession {
+    pub source: BufferedStreamingSource,
+    pub controller: StreamController,
+}
+
+pub fn create_streaming_session(
+    url: String,
+    codec: String,
+    _bitrate: u32,
+    progress: Arc<TrackProgress>,
+) -> Result<StreamingSession> {
+    let data_source = StreamingDataSource::new(url, Arc::clone(&progress))?;
+    let total_bytes = data_source.get_total_bytes();
+
+    let decoder = Decoder::builder()
+        .with_data(data_source)
+        .with_hint(codec.as_str())
+        .with_byte_len(total_bytes)
+        .with_coarse_seek(true)
+        .with_gapless(true)
+        .build()
+        .map_err(|err| eyre!(err))?;
+
+    let sample_rate = decoder.sample_rate();
+    let channels = decoder.channels();
+    let total_duration = decoder.total_duration();
+    if let Some(total) = total_duration {
+        progress.set_total_duration(total);
+    }
+
+    let (sample_tx, sample_rx) = cb_bounded::<SampleMessage>(SAMPLE_CHANNEL_CAPACITY);
+    let (cmd_tx, cmd_rx) = flume::unbounded();
+    let generation = Arc::new(AtomicU64::new(0));
+    let controller = StreamController {
+        cmd_tx,
+        generation: generation.clone(),
+    };
+
+    let decoder_generation = generation.clone();
+    let progress_clone = Arc::clone(&progress);
+    thread::Builder::new()
+        .name("yamusic-stream".into())
+        .spawn(move || {
+            run_decode_loop(
+                decoder,
+                sample_tx,
+                cmd_rx,
+                decoder_generation,
+                progress_clone,
+            );
+        })
+        .map_err(|err| eyre!(err))?;
+
+    let source = BufferedStreamingSource::new(
+        sample_rx,
+        generation,
+        sample_rate,
+        channels,
+        total_duration,
+        controller.clone(),
+    );
+
+    Ok(StreamingSession { source, controller })
+}
+
+fn run_decode_loop(
+    mut decoder: Decoder<StreamingDataSource>,
+    sample_tx: CbSender<SampleMessage>,
+    cmd_rx: Receiver<DecoderCommand>,
+    generation: Arc<AtomicU64>,
+    progress: Arc<TrackProgress>,
+) {
+    let mut active_generation = generation.load(Ordering::SeqCst);
+    let mut stopped = false;
+
+    loop {
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                DecoderCommand::Seek { position, generation } => {
+                    let _ = decoder.try_seek(position);
+                    progress.set_current_position(position);
+                    active_generation = generation;
+                }
+                DecoderCommand::Stop => {
+                    stopped = true;
+                    break;
+                }
+            }
+        }
+
+        if stopped {
+            break;
+        }
+
+        let mut chunk = Vec::with_capacity(PCM_CHUNK_SAMPLES);
+        for _ in 0..PCM_CHUNK_SAMPLES {
+            match decoder.next() {
+                Some(sample) => chunk.push(sample),
+                None => break,
+            }
+        }
+
+        if chunk.is_empty() {
+            let _ = sample_tx.send(SampleMessage::Finished(active_generation));
+            break;
+        }
+
+        if sample_tx
+            .send(SampleMessage::Samples(chunk, active_generation))
+            .is_err()
+        {
+            break;
+        }
+    }
+}
