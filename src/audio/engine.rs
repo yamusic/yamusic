@@ -1,7 +1,7 @@
 use std::{
     sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     },
     thread,
     time::Duration,
@@ -17,7 +17,7 @@ use crate::{
     stream,
 };
 use flume::Sender;
-use rodio::{Decoder, OutputStream, Sink, Source, cpal::StreamConfig};
+use rodio::{OutputStream, Sink, cpal::StreamConfig};
 use yandex_music::model::track::Track;
 
 use super::progress::TrackProgress;
@@ -39,6 +39,8 @@ pub struct AudioPlayer {
     pub is_playing: Arc<AtomicBool>,
     pub current_playback_task: Option<tokio::task::JoinHandle<()>>,
     pub playback_generation: Arc<AtomicU64>,
+    stream_controller: Arc<Mutex<Option<stream::StreamController>>>,
+    playback_offset_millis: Arc<AtomicI64>,
 }
 
 impl AudioPlayer {
@@ -66,16 +68,23 @@ impl AudioPlayer {
             is_playing: Arc::new(AtomicBool::new(false)),
             current_playback_task: None,
             playback_generation: Arc::new(AtomicU64::new(0)),
+            stream_controller: Arc::new(Mutex::new(None)),
+            playback_offset_millis: Arc::new(AtomicI64::new(0)),
         };
 
         let progress = player.track_progress.clone();
         let sink = player.sink.clone();
         let event_tx = player.event_tx.clone();
         let playing = player.is_playing.clone();
+        let offset = player.playback_offset_millis.clone();
 
         thread::spawn(move || {
             loop {
-                progress.set_current_position(sink.get_pos());
+                let sink_pos = sink.get_pos();
+                let sink_ms = sink_pos.as_millis() as i64;
+                let base_ms = offset.load(Ordering::Relaxed);
+                let current_ms = sink_ms.saturating_add(base_ms).max(0) as u64;
+                progress.set_current_position(Duration::from_millis(current_ms));
                 let is_playing = playing.load(Ordering::Relaxed);
 
                 if is_playing && sink.empty() {
@@ -99,6 +108,13 @@ impl AudioPlayer {
 
         self.is_ready.store(false, Ordering::Relaxed);
 
+        self.playback_offset_millis.store(0, Ordering::Relaxed);
+        if let Ok(mut guard) = self.stream_controller.lock() {
+            if let Some(controller) = guard.take() {
+                controller.stop();
+            }
+        }
+
         let generation = self.playback_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let playback_generation = self.playback_generation.clone();
         let api = self.api.clone();
@@ -108,44 +124,46 @@ impl AudioPlayer {
         let playing = self.is_playing.clone();
         let event_tx = self.event_tx.clone();
         let track_clone = track.clone();
+        let playback_offset = self.playback_offset_millis.clone();
+        let stream_controller = Arc::clone(&self.stream_controller);
 
         self.current_playback_task = Some(tokio::task::spawn(async move {
             let (url, codec, bitrate) = api.fetch_track_url(track_clone.id.clone()).await.unwrap();
             track_progress.set_bitrate(bitrate.try_into().unwrap());
+
             let progress = track_progress.clone();
+            let codec_clone = codec.clone();
+            let session = tokio::task::spawn_blocking(move || {
+                stream::create_streaming_session(url, codec_clone, bitrate, progress)
+            })
+            .await
+            .expect("stream session task panicked");
 
-            let streamer = stream::streamer::StreamingDataSource::new(url, progress)
-                .await
-                .unwrap();
-            let total_bytes = streamer.get_total_bytes();
-
-            let handle = tokio::task::spawn_blocking(move || {
-                let duration_secs = (total_bytes as f64 * 8.0) / bitrate as f64;
-                let decoder = Decoder::builder()
-                    .with_data(streamer)
-                    .with_hint(codec.as_str())
-                    .with_byte_len(((bitrate as f64 * duration_secs) / 8.0) as u64)
-                    .with_coarse_seek(true)
-                    .with_gapless(true)
-                    .build()
-                    .unwrap();
-
-                if playback_generation.load(Ordering::SeqCst) != generation {
+            let session = match session {
+                Ok(session) => session,
+                Err(err) => {
+                    eprintln!("failed to start streaming session: {err}");
                     return;
                 }
+            };
 
-                let _ = event_tx.send(Event::TrackStarted(track_clone.clone(), 0));
+            if playback_generation.load(Ordering::SeqCst) != generation {
+                session.controller.stop();
+                return;
+            }
 
-                if let Some(total) = decoder.total_duration() {
-                    track_progress.set_total_duration(total);
-                }
+            if let Ok(mut guard) = stream_controller.lock() {
+                *guard = Some(session.controller.clone());
+            }
 
-                let source = FxSource::new(decoder);
-                sink.append(source);
-                ready.store(true, Ordering::Relaxed);
-                playing.store(true, Ordering::Relaxed);
-            });
-            handle.await.unwrap();
+            playback_offset.store(0, Ordering::Relaxed);
+
+            let _ = event_tx.send(Event::TrackStarted(track_clone.clone(), 0));
+
+            let source = FxSource::new(session.source);
+            sink.append(source);
+            ready.store(true, Ordering::Relaxed);
+            playing.store(true, Ordering::Relaxed);
         }));
 
         self.current_track = Some(track);
@@ -155,13 +173,17 @@ impl AudioPlayer {
         self.is_ready.store(false, Ordering::Relaxed);
         self.is_playing.store(false, Ordering::Relaxed);
         self.track_progress.reset();
+        if let Ok(mut guard) = self.stream_controller.lock() {
+            if let Some(controller) = guard.take() {
+                controller.stop();
+            }
+        }
         self.sink.stop();
         if let Some(task) = &self.current_playback_task {
             task.abort();
         }
         self.current_playback_task = None;
         self.current_track = None;
-        self.track_progress.reset();
     }
 
     pub fn play_pause(&mut self) {
@@ -170,8 +192,11 @@ impl AudioPlayer {
             self.sink.play();
         } else {
             self.sink.pause();
+            let sink_ms = self.sink.get_pos().as_millis() as i64;
+            let base_ms = self.playback_offset_millis.load(Ordering::Relaxed);
+            let current_ms = sink_ms.saturating_add(base_ms).max(0) as u64;
             self.track_progress
-                .set_current_position(self.sink.get_pos());
+                .set_current_position(Duration::from_millis(current_ms));
         }
         self.is_playing.store(is_paused, Ordering::Relaxed);
     }
@@ -199,13 +224,10 @@ impl AudioPlayer {
             return;
         }
 
-        self.sink.pause();
-        let _ = self.sink.try_seek(
-            self.sink
-                .get_pos()
-                .saturating_sub(Duration::from_secs(seconds)),
-        );
-        self.sink.play();
+        let (current_ms, _) = self.track_progress.get_progress();
+        let delta = seconds.saturating_mul(1000);
+        let target_ms = current_ms.saturating_sub(delta);
+        self.perform_seek(Duration::from_millis(target_ms));
     }
 
     pub fn seek_forwards(&mut self, seconds: u64) {
@@ -213,12 +235,24 @@ impl AudioPlayer {
             return;
         }
 
+        let (current_ms, total_ms) = self.track_progress.get_progress();
+        let delta = seconds.saturating_mul(1000);
+        let mut target_ms = current_ms.saturating_add(delta);
+        if total_ms > 0 {
+            target_ms = target_ms.min(total_ms);
+        }
+        self.perform_seek(Duration::from_millis(target_ms));
+    }
+
+    fn perform_seek(&mut self, target: Duration) {
         self.sink.pause();
-        let _ = self.sink.try_seek(
-            self.sink
-                .get_pos()
-                .saturating_add(Duration::from_secs(seconds)),
-        );
+        if self.sink.try_seek(target).is_ok() {
+            let target_ms = target.as_millis() as i64;
+            let sink_ms = self.sink.get_pos().as_millis() as i64;
+            self.playback_offset_millis
+                .store(target_ms - sink_ms, Ordering::Relaxed);
+            self.track_progress.set_current_position(target);
+        }
         self.sink.play();
     }
 
