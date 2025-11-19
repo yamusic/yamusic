@@ -11,7 +11,7 @@ use crate::{
 use flume::Sender;
 use std::sync::{Arc, atomic::Ordering};
 use yandex_music::model::{
-    playlist::{Playlist, TracksType},
+    playlist::{Playlist, PlaylistTracks},
     track::Track,
 };
 
@@ -38,11 +38,11 @@ impl AudioSystem {
     pub async fn init(&mut self) -> color_eyre::Result<()> {
         let playlist = self.api.fetch_liked_tracks().await?;
         let tracks = match &playlist.tracks {
-            Some(TracksType::Full(tracks)) => tracks.clone(),
-            Some(TracksType::TrackWithInfo(tracks)) => {
+            Some(PlaylistTracks::Full(tracks)) => tracks.clone(),
+            Some(PlaylistTracks::WithInfo(tracks)) => {
                 tracks.iter().map(|t| t.track.clone()).collect()
             }
-            Some(TracksType::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
+            Some(PlaylistTracks::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
             None => vec![],
         };
         let context = PlaybackContext::Playlist(playlist);
@@ -56,11 +56,11 @@ impl AudioSystem {
 
     pub async fn play_playlist(&mut self, playlist: Playlist) -> color_eyre::Result<()> {
         let tracks = match &playlist.tracks {
-            Some(TracksType::Full(tracks)) => tracks.clone(),
-            Some(TracksType::TrackWithInfo(tracks)) => {
+            Some(PlaylistTracks::Full(tracks)) => tracks.clone(),
+            Some(PlaylistTracks::WithInfo(tracks)) => {
                 tracks.iter().map(|t| t.track.clone()).collect()
             }
-            Some(TracksType::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
+            Some(PlaylistTracks::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
             None => vec![],
         };
 

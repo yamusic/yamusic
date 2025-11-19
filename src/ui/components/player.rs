@@ -53,11 +53,8 @@ impl<'a> Widget for PlayerWidget<'a> {
             self.track_artist,
             self.is_playing,
         );
-        let controls_widget = PlayerControlsWidget::new(
-            self.repeat_mode,
-            self.shuffle_mode,
-            self.volume,
-        );
+        let controls_widget =
+            PlayerControlsWidget::new(self.repeat_mode, self.shuffle_mode, self.volume);
 
         progress_widget.render(layout[0], buf);
         controls_widget.render(layout[1], buf);

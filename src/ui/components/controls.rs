@@ -15,11 +15,7 @@ pub struct PlayerControlsWidget {
 }
 
 impl PlayerControlsWidget {
-    pub fn new(
-        repeat_mode: RepeatMode,
-        shuffle_mode: bool,
-        volume: u8,
-    ) -> Self {
+    pub fn new(repeat_mode: RepeatMode, shuffle_mode: bool, volume: u8) -> Self {
         Self {
             repeat_mode,
             shuffle_mode,
@@ -29,11 +25,8 @@ impl PlayerControlsWidget {
 }
 
 impl Widget for PlayerControlsWidget {
-    fn render(
-        self,
-        area: ratatui::prelude::Rect,
-        buf: &mut ratatui::prelude::Buffer,
-    ) where
+    fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer)
+    where
         Self: Sized,
     {
         let repeat_icon = match self.repeat_mode {
@@ -94,15 +87,14 @@ impl Widget for PlayerControlsWidget {
             volume_text = volume_text.fg(fg);
         }
 
-        let volume_block =
-            Block::default()
-                .borders(Borders::ALL)
-                .border_set(border::Set {
-                    top_right: symbols::line::ROUNDED.vertical_left,
-                    top_left: symbols::line::ROUNDED.horizontal_down,
-                    bottom_left: symbols::line::ROUNDED.horizontal_up,
-                    ..symbols::border::ROUNDED
-                });
+        let volume_block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(border::Set {
+                top_right: symbols::line::ROUNDED.vertical_left,
+                top_left: symbols::line::ROUNDED.horizontal_down,
+                bottom_left: symbols::line::ROUNDED.horizontal_up,
+                ..symbols::border::ROUNDED
+            });
 
         let volume_gauge = Gauge::default()
             .block(volume_block)
