@@ -17,7 +17,7 @@ use yandex_music::{
 
 pub struct ApiService {
     pub client: Arc<YandexMusicClient>,
-    user_id: i32,
+    user_id: u64,
 }
 
 impl ApiService {
@@ -41,7 +41,7 @@ impl ApiService {
 
     pub async fn fetch_liked_tracks(&self) -> color_eyre::Result<Playlist> {
         let opts = GetPlaylistsOptions::new(self.user_id)
-            .kinds([3])
+            .kinds([3u32])
             .with_tracks(true);
         let playlist = self.client.get_playlists(&opts).await?;
 
@@ -56,7 +56,7 @@ impl ApiService {
         Ok(self.client.get_all_playlists(&opts).await?)
     }
 
-    pub async fn fetch_playlists(&self, kinds: Vec<i32>) -> color_eyre::Result<Playlist> {
+    pub async fn fetch_playlists(&self, kinds: Vec<u32>) -> color_eyre::Result<Playlist> {
         self.client
             .get_playlists(
                 &GetPlaylistsOptions::new(self.user_id)
@@ -90,7 +90,7 @@ impl ApiService {
     pub async fn fetch_track_url(
         &self,
         track_id: String,
-    ) -> color_eyre::Result<(String, String, i32)> {
+    ) -> color_eyre::Result<(String, String, u32)> {
         let opts = GetDownloadInfoOptions::new(track_id);
         let download_info = self.client.get_download_info(&opts).await?;
         let info = download_info

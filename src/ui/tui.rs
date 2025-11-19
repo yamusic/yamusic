@@ -10,9 +10,8 @@ use flume::{Receiver, Sender};
 use ratatui::crossterm::{
     cursor,
     event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
-        EnableMouseCapture, Event as CrosstermEvent, KeyEvent, KeyEventKind,
-        MouseEvent,
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent,
     },
     terminal::{EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -69,37 +68,39 @@ impl Tui {
 
     pub fn start(&mut self) {
         let event_tx = self.event_tx.clone();
-        thread::spawn(move || loop {
-            let _ = event_tx.send(TerminalEvent::Tick);
-            if !event::poll(Duration::from_millis(16)).unwrap() {
-                continue;
-            }
-            let crossterm_event = event::read();
-            match crossterm_event {
-                Ok(evt) => match evt {
-                    CrosstermEvent::Key(key) => {
-                        if key.kind == KeyEventKind::Press {
-                            let _ = event_tx.send(TerminalEvent::Key(key));
+        thread::spawn(move || {
+            loop {
+                let _ = event_tx.send(TerminalEvent::Tick);
+                if !event::poll(Duration::from_millis(16)).unwrap() {
+                    continue;
+                }
+                let crossterm_event = event::read();
+                match crossterm_event {
+                    Ok(evt) => match evt {
+                        CrosstermEvent::Key(key) => {
+                            if key.kind == KeyEventKind::Press {
+                                let _ = event_tx.send(TerminalEvent::Key(key));
+                            }
                         }
+                        CrosstermEvent::Mouse(mouse) => {
+                            let _ = event_tx.send(TerminalEvent::Mouse(mouse));
+                        }
+                        CrosstermEvent::Resize(x, y) => {
+                            let _ = event_tx.send(TerminalEvent::Resize(x, y));
+                        }
+                        CrosstermEvent::FocusLost => {
+                            let _ = event_tx.send(TerminalEvent::FocusLost);
+                        }
+                        CrosstermEvent::FocusGained => {
+                            let _ = event_tx.send(TerminalEvent::FocusGained);
+                        }
+                        CrosstermEvent::Paste(s) => {
+                            let _ = event_tx.send(TerminalEvent::Paste(s));
+                        }
+                    },
+                    Err(_) => {
+                        let _ = event_tx.send(TerminalEvent::Error);
                     }
-                    CrosstermEvent::Mouse(mouse) => {
-                        let _ = event_tx.send(TerminalEvent::Mouse(mouse));
-                    }
-                    CrosstermEvent::Resize(x, y) => {
-                        let _ = event_tx.send(TerminalEvent::Resize(x, y));
-                    }
-                    CrosstermEvent::FocusLost => {
-                        let _ = event_tx.send(TerminalEvent::FocusLost);
-                    }
-                    CrosstermEvent::FocusGained => {
-                        let _ = event_tx.send(TerminalEvent::FocusGained);
-                    }
-                    CrosstermEvent::Paste(s) => {
-                        let _ = event_tx.send(TerminalEvent::Paste(s));
-                    }
-                },
-                Err(_) => {
-                    let _ = event_tx.send(TerminalEvent::Error);
                 }
             }
         });
@@ -107,11 +108,7 @@ impl Tui {
 
     pub fn enter(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()?;
-        crossterm::execute!(
-            std::io::stdout(),
-            EnterAlternateScreen,
-            cursor::Hide
-        )?;
+        crossterm::execute!(std::io::stdout(), EnterAlternateScreen, cursor::Hide)?;
         if self.mouse {
             crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
         }
@@ -137,11 +134,7 @@ impl Tui {
     }
 
     pub fn restore() -> Result<()> {
-        crossterm::execute!(
-            std::io::stdout(),
-            LeaveAlternateScreen,
-            cursor::Show
-        )?;
+        crossterm::execute!(std::io::stdout(), LeaveAlternateScreen, cursor::Show)?;
         crossterm::terminal::disable_raw_mode()?;
         Ok(())
     }

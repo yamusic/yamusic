@@ -1,9 +1,6 @@
 use rodio::{
     Device, DeviceTrait, OutputStream, OutputStreamBuilder, Sink,
-    cpal::{
-        BufferSize, SampleFormat, SampleRate, StreamConfig, default_host,
-        traits::HostTrait,
-    },
+    cpal::{BufferSize, SampleFormat, SampleRate, StreamConfig, default_host, traits::HostTrait},
 };
 
 pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {

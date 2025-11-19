@@ -1,12 +1,14 @@
 use crate::audio::progress::TrackProgress;
-use color_eyre::{eyre::eyre, Result};
-use crossbeam_channel::{bounded as cb_bounded, Receiver as CbReceiver, Sender as CbSender, TryRecvError};
+use color_eyre::{Result, eyre::eyre};
+use crossbeam_channel::{
+    Receiver as CbReceiver, Sender as CbSender, TryRecvError, bounded as cb_bounded,
+};
 use flume::{Receiver, Sender};
 use rodio::{Decoder, Source};
 use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 use std::thread;
 use std::time::Duration;
@@ -35,9 +37,10 @@ pub struct StreamController {
 impl StreamController {
     pub fn seek(&self, position: Duration) {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        let _ = self
-            .cmd_tx
-            .send(DecoderCommand::Seek { position, generation });
+        let _ = self.cmd_tx.send(DecoderCommand::Seek {
+            position,
+            generation,
+        });
     }
 
     pub fn stop(&self) {
@@ -230,7 +233,10 @@ fn run_decode_loop(
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
-                DecoderCommand::Seek { position, generation } => {
+                DecoderCommand::Seek {
+                    position,
+                    generation,
+                } => {
                     let _ = decoder.try_seek(position);
                     progress.set_current_position(position);
                     active_generation = generation;
