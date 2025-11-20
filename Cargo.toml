@@ -49,3 +49,8 @@ opt-level = 2
 codegen-units = 1024
 lto = false
 incremental = true
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

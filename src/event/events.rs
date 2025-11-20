@@ -1,13 +1,21 @@
 use std::time::Duration;
 
-use yandex_music::model::track::Track;
+use yandex_music::model::{playlist::Playlist, track::Track};
 
+#[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {
     // Events
     Initialize,
     TrackStarted(Track, usize),
     TrackEnded,
+    TracksFetched(Vec<Track>),
+    LikedTracksFetched(Vec<Track>),
+    PlaylistTracksFetched(Vec<Track>),
+    PlaylistsFetched(Vec<Playlist>),
+    PlaylistSelected(Playlist),
+    LyricsFetched(Option<String>),
+    FetchError(String),
 
     // Commands
     Play(i32),

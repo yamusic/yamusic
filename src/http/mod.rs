@@ -5,11 +5,12 @@ use yandex_music::{
     api::{
         playlist::{get_all_playlists::GetAllPlaylistsOptions, get_playlists::GetPlaylistsOptions},
         track::{
-            get_download_info::GetDownloadInfoOptions, get_similar_tracks::GetSimilarTracksOptions,
-            get_tracks::GetTracksOptions,
+            get_download_info::GetDownloadInfoOptions, get_lyrics::GetLyricsOptions,
+            get_similar_tracks::GetSimilarTracksOptions, get_tracks::GetTracksOptions,
         },
     },
     model::{
+        info::lyrics::LyricsFormat,
         playlist::Playlist,
         track::{PartialTrack, Track},
     },
@@ -56,6 +57,19 @@ impl ApiService {
         Ok(self.client.get_all_playlists(&opts).await?)
     }
 
+    pub async fn fetch_playlist(&self, kind: u32) -> color_eyre::Result<Playlist> {
+        self.client
+            .get_playlists(
+                &GetPlaylistsOptions::new(self.user_id)
+                    .kinds([kind])
+                    .with_tracks(true),
+            )
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| color_eyre::eyre::eyre!("Playlist not found"))
+    }
+
     pub async fn fetch_playlists(&self, kinds: Vec<u32>) -> color_eyre::Result<Playlist> {
         self.client
             .get_playlists(
@@ -100,5 +114,21 @@ impl ApiService {
         let url = info.get_direct_link(&self.client.inner).await?;
 
         Ok((url, info.codec.clone(), info.bitrate_in_kbps))
+    }
+
+    pub async fn fetch_lyrics(
+        &self,
+        track_id: String,
+        format: LyricsFormat,
+    ) -> color_eyre::Result<Option<String>> {
+        let opts = GetLyricsOptions::new(track_id, format);
+        match self.client.get_lyrics(&opts).await {
+            Ok(lyrics) => {
+                let url = lyrics.download_url;
+                let text = self.client.inner.get(url).send().await?.text().await?;
+                Ok(Some(text))
+            }
+            Err(_) => Ok(None),
+        }
     }
 }

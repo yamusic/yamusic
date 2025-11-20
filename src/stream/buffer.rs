@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 pub(crate) const BUFFER_SIZE: usize = 16 * 1024 * 1024;
-pub(crate) const PREFETCH_TRIGGER: usize = 512 * 1024;
+pub(crate) const PREFETCH_TRIGGER: usize = 256 * 1024;
 
 #[derive(Debug)]
 pub struct BufferState {

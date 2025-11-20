@@ -27,6 +27,7 @@ pub enum PlaybackContext {
     Album(Album),
     Track,
     Unknown,
+    List,
 }
 
 impl QueueManager {
@@ -62,7 +63,8 @@ impl QueueManager {
         match self.playback_context {
             PlaybackContext::Playlist(_)
             | PlaybackContext::Artist(_)
-            | PlaybackContext::Album(_) => {
+            | PlaybackContext::Album(_)
+            | PlaybackContext::List => {
                 self.queue = tracks;
                 self.current_track_index = start_index;
             }
@@ -175,7 +177,8 @@ impl QueueManager {
                     PlaybackContext::Album(_)
                     | PlaybackContext::Artist(_)
                     | PlaybackContext::Playlist(_)
-                    | PlaybackContext::Track => RepeatMode::All,
+                    | PlaybackContext::Track
+                    | PlaybackContext::List => RepeatMode::All,
                     _ => RepeatMode::None,
                 }
             }

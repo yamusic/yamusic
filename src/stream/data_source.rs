@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use super::buffer::BufferState;
 
-const PREFETCH_SIZE: usize = 1024 * 1024;
-const MIN_INITIAL_DATA: usize = 256 * 1024;
+const PREFETCH_SIZE: usize = 256 * 1024;
+const MIN_INITIAL_DATA: usize = 64 * 1024;
 const MAX_ATTEMPTS: usize = 100;
 
 enum FetchCommand {
@@ -36,8 +36,7 @@ pub struct StreamingDataSource {
 }
 
 impl StreamingDataSource {
-    pub fn new(url: String, progress: Arc<TrackProgress>) -> Result<Self> {
-        let client = Client::new();
+    pub fn new(client: Client, url: String, progress: Arc<TrackProgress>) -> Result<Self> {
         let head = client.head(&url).send()?;
         let total = head
             .headers()

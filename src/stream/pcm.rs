@@ -13,6 +13,8 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
+use reqwest::blocking::Client;
+
 use super::data_source::StreamingDataSource;
 
 const PCM_CHUNK_SAMPLES: usize = 8192;
@@ -161,12 +163,13 @@ pub struct StreamingSession {
 }
 
 pub fn create_streaming_session(
+    client: Client,
     url: String,
     codec: String,
     _bitrate: u32,
     progress: Arc<TrackProgress>,
 ) -> Result<StreamingSession> {
-    let data_source = StreamingDataSource::new(url, Arc::clone(&progress))?;
+    let data_source = StreamingDataSource::new(client, url, Arc::clone(&progress))?;
     let total_bytes = data_source.get_total_bytes();
 
     let decoder = Decoder::builder()

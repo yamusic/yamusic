@@ -1,7 +1,7 @@
 use std::{
     ops::{Deref, DerefMut},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use color_eyre::eyre::Result;
@@ -69,38 +69,47 @@ impl Tui {
     pub fn start(&mut self) {
         let event_tx = self.event_tx.clone();
         thread::spawn(move || {
+            let tick_rate = Duration::from_millis(33);
+            let mut last_tick = Instant::now();
             loop {
-                let _ = event_tx.send(TerminalEvent::Tick);
-                if !event::poll(Duration::from_millis(16)).unwrap() {
-                    continue;
-                }
-                let crossterm_event = event::read();
-                match crossterm_event {
-                    Ok(evt) => match evt {
-                        CrosstermEvent::Key(key) => {
-                            if key.kind == KeyEventKind::Press {
-                                let _ = event_tx.send(TerminalEvent::Key(key));
+                let timeout = tick_rate
+                    .checked_sub(last_tick.elapsed())
+                    .unwrap_or_else(|| Duration::from_secs(0));
+
+                if event::poll(timeout).unwrap() {
+                    let crossterm_event = event::read();
+                    match crossterm_event {
+                        Ok(evt) => match evt {
+                            CrosstermEvent::Key(key) => {
+                                if key.kind == KeyEventKind::Press {
+                                    let _ = event_tx.send(TerminalEvent::Key(key));
+                                }
                             }
+                            CrosstermEvent::Mouse(mouse) => {
+                                let _ = event_tx.send(TerminalEvent::Mouse(mouse));
+                            }
+                            CrosstermEvent::Resize(x, y) => {
+                                let _ = event_tx.send(TerminalEvent::Resize(x, y));
+                            }
+                            CrosstermEvent::FocusLost => {
+                                let _ = event_tx.send(TerminalEvent::FocusLost);
+                            }
+                            CrosstermEvent::FocusGained => {
+                                let _ = event_tx.send(TerminalEvent::FocusGained);
+                            }
+                            CrosstermEvent::Paste(s) => {
+                                let _ = event_tx.send(TerminalEvent::Paste(s));
+                            }
+                        },
+                        Err(_) => {
+                            let _ = event_tx.send(TerminalEvent::Error);
                         }
-                        CrosstermEvent::Mouse(mouse) => {
-                            let _ = event_tx.send(TerminalEvent::Mouse(mouse));
-                        }
-                        CrosstermEvent::Resize(x, y) => {
-                            let _ = event_tx.send(TerminalEvent::Resize(x, y));
-                        }
-                        CrosstermEvent::FocusLost => {
-                            let _ = event_tx.send(TerminalEvent::FocusLost);
-                        }
-                        CrosstermEvent::FocusGained => {
-                            let _ = event_tx.send(TerminalEvent::FocusGained);
-                        }
-                        CrosstermEvent::Paste(s) => {
-                            let _ = event_tx.send(TerminalEvent::Paste(s));
-                        }
-                    },
-                    Err(_) => {
-                        let _ = event_tx.send(TerminalEvent::Error);
                     }
+                }
+
+                if last_tick.elapsed() >= tick_rate {
+                    let _ = event_tx.send(TerminalEvent::Tick);
+                    last_tick = Instant::now();
                 }
             }
         });
