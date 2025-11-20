@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering},
     },
     thread,
     time::Duration,
@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     audio::{
-        fx::FxSource,
+        fx::{AudioAnalyzer, FxSource},
         util::{construct_sink, setup_device_config},
     },
     event::events::Event,
@@ -21,10 +21,12 @@ use rodio::{OutputStream, Sink, cpal::StreamConfig};
 use yandex_music::model::track::Track;
 
 use super::progress::TrackProgress;
+use reqwest::blocking::Client;
 
 #[allow(dead_code)]
 pub struct AudioPlayer {
     api: Arc<ApiService>,
+    http_client: Client,
     stream: OutputStream,
     sink: Arc<Sink>,
     stream_config: StreamConfig,
@@ -41,6 +43,7 @@ pub struct AudioPlayer {
     pub playback_generation: Arc<AtomicU64>,
     stream_controller: Arc<Mutex<Option<stream::StreamController>>>,
     playback_offset_millis: Arc<AtomicI64>,
+    pub current_amplitude: Arc<AtomicU32>,
 }
 
 impl AudioPlayer {
@@ -51,8 +54,13 @@ impl AudioPlayer {
         let (device, stream_config, sample_format) = setup_device_config();
         let (stream, sink) = construct_sink(device, &stream_config, sample_format)?;
 
+        let http_client = Client::builder()
+            .build()
+            .expect("failed to create http client");
+
         let player = Self {
             api,
+            http_client,
             stream,
             sink: Arc::new(sink),
             stream_config,
@@ -70,6 +78,7 @@ impl AudioPlayer {
             playback_generation: Arc::new(AtomicU64::new(0)),
             stream_controller: Arc::new(Mutex::new(None)),
             playback_offset_millis: Arc::new(AtomicI64::new(0)),
+            current_amplitude: Arc::new(AtomicU32::new(0)),
         };
 
         let progress = player.track_progress.clone();
@@ -118,6 +127,7 @@ impl AudioPlayer {
         let generation = self.playback_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let playback_generation = self.playback_generation.clone();
         let api = self.api.clone();
+        let http_client = self.http_client.clone();
         let sink = self.sink.clone();
         let track_progress = self.track_progress.clone();
         let ready = self.is_ready.clone();
@@ -126,6 +136,7 @@ impl AudioPlayer {
         let track_clone = track.clone();
         let playback_offset = self.playback_offset_millis.clone();
         let stream_controller = Arc::clone(&self.stream_controller);
+        let amplitude = self.current_amplitude.clone();
 
         self.current_playback_task = Some(tokio::task::spawn(async move {
             let (url, codec, bitrate) = api.fetch_track_url(track_clone.id.clone()).await.unwrap();
@@ -134,7 +145,7 @@ impl AudioPlayer {
             let progress = track_progress.clone();
             let codec_clone = codec.clone();
             let session = tokio::task::spawn_blocking(move || {
-                stream::create_streaming_session(url, codec_clone, bitrate, progress)
+                stream::create_streaming_session(http_client, url, codec_clone, bitrate, progress)
             })
             .await
             .expect("stream session task panicked");
@@ -160,7 +171,8 @@ impl AudioPlayer {
 
             let _ = event_tx.send(Event::TrackStarted(track_clone.clone(), 0));
 
-            let source = FxSource::new(session.source);
+            let mut source = FxSource::new(session.source);
+            source.add_effect(AudioAnalyzer::new(amplitude));
             sink.append(source);
             ready.store(true, Ordering::Relaxed);
             playing.store(true, Ordering::Relaxed);

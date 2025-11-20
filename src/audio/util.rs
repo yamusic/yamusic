@@ -9,22 +9,14 @@ pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
     let config: StreamConfig;
     let sample_format: SampleFormat;
 
-    if let Ok(default_configs) = device.supported_output_configs() {
-        let default_config = default_configs
-            .max_by_key(|cfg| cfg.max_sample_rate().0)
-            .unwrap();
-
-        config = StreamConfig {
-            channels: default_config.channels(),
-            sample_rate: default_config.max_sample_rate(),
-            buffer_size: BufferSize::Fixed(4096),
-        };
+    if let Ok(default_config) = device.default_output_config() {
+        config = default_config.config();
         sample_format = default_config.sample_format();
     } else {
         config = StreamConfig {
             channels: 2,
-            sample_rate: SampleRate(48000),
-            buffer_size: BufferSize::Fixed(4096),
+            sample_rate: SampleRate(44100),
+            buffer_size: BufferSize::Default,
         };
         sample_format = SampleFormat::F32;
     }

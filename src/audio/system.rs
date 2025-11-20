@@ -75,6 +75,10 @@ impl AudioSystem {
         Ok(())
     }
 
+    pub async fn load_tracks(&mut self, tracks: Vec<Track>) {
+        self.queue.load(PlaybackContext::List, tracks, 0).await;
+    }
+
     pub async fn play_single_track(&mut self, track: Track) {
         if let Some(track) = self
             .queue
@@ -185,5 +189,21 @@ impl AudioSystem {
 
     pub fn track_progress(&self) -> &Arc<TrackProgress> {
         &self.player.track_progress
+    }
+
+    pub fn queue(&self) -> &Vec<Track> {
+        &self.queue.queue
+    }
+
+    pub fn history(&self) -> &Vec<Track> {
+        &self.queue.history
+    }
+
+    pub fn current_track_index(&self) -> usize {
+        self.queue.current_track_index
+    }
+
+    pub fn current_amplitude(&self) -> f32 {
+        f32::from_bits(self.player.current_amplitude.load(Ordering::Relaxed))
     }
 }

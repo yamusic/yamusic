@@ -72,7 +72,7 @@ impl Widget for PlayerControlsWidget {
                 self.volume as f64 / 100.0,
                 None,
                 colors::PRIMARY,
-                colors::NEUTRAL,
+                colors::BACKGROUND,
             )
         } else {
             (
@@ -90,7 +90,6 @@ impl Widget for PlayerControlsWidget {
         let volume_block = Block::default()
             .borders(Borders::ALL)
             .border_set(border::Set {
-                top_right: symbols::line::ROUNDED.vertical_left,
                 top_left: symbols::line::ROUNDED.horizontal_down,
                 bottom_left: symbols::line::ROUNDED.horizontal_up,
                 ..symbols::border::ROUNDED
