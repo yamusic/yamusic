@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::Widget,
 };
 
@@ -162,7 +162,7 @@ impl<'a> Widget for LyricsWidget<'a> {
                     cur_line,
                     inner.width as usize,
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(colors::ACCENT)
                         .add_modifier(Modifier::BOLD),
                 );
             }
@@ -190,7 +190,7 @@ impl<'a> Widget for LyricsWidget<'a> {
             for i in 0..max_bar_w {
                 let ch = if i == pos { '•' } else { '─' };
                 let style = if i == pos {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(colors::ACCENT)
                 } else {
                     Style::default().fg(colors::NEUTRAL)
                 };
