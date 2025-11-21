@@ -5,12 +5,12 @@ use yandex_music::{
     api::{
         playlist::{get_all_playlists::GetAllPlaylistsOptions, get_playlists::GetPlaylistsOptions},
         track::{
-            get_download_info::GetDownloadInfoOptions, get_lyrics::GetLyricsOptions,
+            get_file_info::GetFileInfoOptions, get_lyrics::GetLyricsOptions,
             get_similar_tracks::GetSimilarTracksOptions, get_tracks::GetTracksOptions,
         },
     },
     model::{
-        info::lyrics::LyricsFormat,
+        info::{file_info::Codec, lyrics::LyricsFormat},
         playlist::Playlist,
         track::{PartialTrack, Track},
     },
@@ -105,15 +105,10 @@ impl ApiService {
         &self,
         track_id: String,
     ) -> color_eyre::Result<(String, String, u32)> {
-        let opts = GetDownloadInfoOptions::new(track_id);
-        let download_info = self.client.get_download_info(&opts).await?;
-        let info = download_info
-            .iter()
-            .max_by_key(|info| info.bitrate_in_kbps)
-            .ok_or(color_eyre::eyre::eyre!("No download info found"))?;
-        let url = info.get_direct_link(&self.client.inner).await?;
+        let opts = GetFileInfoOptions::new(track_id).codec(Codec::FlacMp4);
+        let info = self.client.get_file_info(&opts).await?;
 
-        Ok((url, info.codec.clone(), info.bitrate_in_kbps))
+        Ok((info.url, info.codec, info.bitrate))
     }
 
     pub async fn fetch_lyrics(

@@ -3224,9 +3224,9 @@ dependencies = [
 
 [[package]]
 name = "yandex-music"
-version = "0.4.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b26445744be53c0379a3d06411f1b8098da1751884e113486ffe07d4e417bbeb"
+checksum = "651f31829b9fac46b80c49bc33798b09db27754fda368b5c8c4a85ee83106849"
 dependencies = [
  "base64",
  "chrono",
