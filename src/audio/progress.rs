@@ -9,6 +9,7 @@ pub struct TrackProgress {
     total_bytes: Arc<AtomicU64>,
     buffered_bytes: Arc<AtomicU64>,
     bitrate: Arc<AtomicU64>,
+    generation: Arc<AtomicU64>,
 }
 
 impl TrackProgress {
@@ -19,6 +20,7 @@ impl TrackProgress {
             total_bytes: Arc::new(AtomicU64::new(0)),
             buffered_bytes: Arc::new(AtomicU64::new(0)),
             bitrate: Arc::new(AtomicU64::new(0)),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -80,7 +82,12 @@ impl TrackProgress {
         self.buffered_bytes.load(Ordering::Relaxed)
     }
 
+    pub fn get_generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
     pub fn reset(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.set_buffered_bytes(0);
         self.set_current_position(Duration::ZERO);
         self.set_total_duration(Duration::ZERO);

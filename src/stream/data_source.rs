@@ -37,6 +37,8 @@ pub struct StreamingDataSource {
 
 impl StreamingDataSource {
     pub fn new(client: Client, url: String, progress: Arc<TrackProgress>) -> Result<Self> {
+        let progress_generation = progress.get_generation();
+
         let range_header = format!("bytes=0-{}", PREFETCH_SIZE - 1);
         let resp = client.get(&url).header("Range", range_header).send()?;
 
@@ -92,6 +94,7 @@ impl StreamingDataSource {
                     generation_clone,
                     rx_cmd,
                     tx_res_clone,
+                    progress_generation,
                 );
             })
         };
@@ -118,6 +121,7 @@ impl StreamingDataSource {
         generation: Arc<AtomicU64>,
         rx_cmd: Receiver<FetchCommand>,
         tx_res: Sender<()>,
+        progress_generation: u64,
     ) {
         while let Ok(cmd) = rx_cmd.recv() {
             match cmd {
@@ -146,8 +150,12 @@ impl StreamingDataSource {
                                 }
                             };
 
-                            if let Some(buffered_pos) = maybe_buffered {
-                                prog.set_buffered_bytes(buffered_pos);
+                            if request_generation == generation.load(Ordering::SeqCst)
+                                && progress_generation == prog.get_generation()
+                            {
+                                if let Some(buffered_pos) = maybe_buffered {
+                                    prog.set_buffered_bytes(buffered_pos);
+                                }
                             }
                             let _ = tx_res.send(());
                         }
@@ -328,8 +336,6 @@ impl Seek for StreamingDataSource {
 impl Drop for StreamingDataSource {
     fn drop(&mut self) {
         let _ = self.fetch_tx.send(FetchCommand::Shutdown);
-        if let Some(h) = self.thread_handle.take() {
-            let _ = h.join();
-        }
+        if let Some(_h) = self.thread_handle.take() {}
     }
 }

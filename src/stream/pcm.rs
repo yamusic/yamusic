@@ -198,6 +198,7 @@ pub fn create_streaming_session(
 
     let decoder_generation = generation.clone();
     let progress_clone = Arc::clone(&progress);
+    let progress_generation = progress.get_generation();
     thread::Builder::new()
         .name("yamusic-stream".into())
         .spawn(move || {
@@ -207,6 +208,7 @@ pub fn create_streaming_session(
                 cmd_rx,
                 decoder_generation,
                 progress_clone,
+                progress_generation,
             );
         })
         .map_err(|err| eyre!(err))?;
@@ -229,6 +231,7 @@ fn run_decode_loop(
     cmd_rx: Receiver<DecoderCommand>,
     generation: Arc<AtomicU64>,
     progress: Arc<TrackProgress>,
+    progress_generation: u64,
 ) {
     let mut active_generation = generation.load(Ordering::SeqCst);
     let mut stopped = false;
@@ -241,7 +244,9 @@ fn run_decode_loop(
                     generation,
                 } => {
                     let _ = decoder.try_seek(position);
-                    progress.set_current_position(position);
+                    if progress_generation == progress.get_generation() {
+                        progress.set_current_position(position);
+                    }
                     active_generation = generation;
                 }
                 DecoderCommand::Stop => {

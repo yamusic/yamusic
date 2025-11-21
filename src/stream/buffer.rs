@@ -11,6 +11,7 @@ pub struct BufferState {
     pub(crate) eof: bool,
     pending: Option<(u64, u64)>,
     max_buffered_from_start: u64,
+    buffering_base: u64,
 }
 
 impl BufferState {
@@ -22,6 +23,7 @@ impl BufferState {
             eof: false,
             pending: None,
             max_buffered_from_start: 0,
+            buffering_base: 0,
         }
     }
 
@@ -99,8 +101,10 @@ impl BufferState {
 
         self.data.extend(new);
 
-        if self.start_pos == 0 {
-            let new_end = self.start_pos + self.data.len() as u64;
+        let new_end = self.start_pos + self.data.len() as u64;
+        if self.start_pos >= self.buffering_base
+            && self.start_pos <= self.max_buffered_from_start + 1
+        {
             self.max_buffered_from_start = self.max_buffered_from_start.max(new_end);
         }
 
@@ -112,9 +116,9 @@ impl BufferState {
         self.start_pos = start;
         self.pending = None;
         self.eof = false;
-
-        if start == 0 {
-            self.max_buffered_from_start = 0;
+        if start <= self.max_buffered_from_start {
+            self.buffering_base = start;
+            self.max_buffered_from_start = start;
         }
     }
 
@@ -130,6 +134,9 @@ impl BufferState {
             self.data.pop_front();
         }
         self.start_pos += drop as u64;
+
+        let current_end = self.start_pos + self.data.len() as u64;
+        self.max_buffered_from_start = self.max_buffered_from_start.max(current_end);
     }
 
     pub fn end_pos(&self) -> u64 {
