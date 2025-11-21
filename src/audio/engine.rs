@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     audio::{
-        fx::{AudioAnalyzer, FxSource},
+        fx::{AudioAnalyzer, FxSource, fade::Fade},
         util::{construct_sink, setup_device_config},
     },
     event::events::Event,
@@ -17,7 +17,7 @@ use crate::{
     stream,
 };
 use flume::Sender;
-use rodio::{OutputStream, Sink, cpal::StreamConfig};
+use rodio::{OutputStream, Sink, Source, cpal::StreamConfig};
 use yandex_music::model::track::Track;
 
 use super::progress::TrackProgress;
@@ -193,6 +193,18 @@ impl AudioPlayer {
 
             let mut source = FxSource::new(session.source);
             source.add_effect(AudioAnalyzer::new(amplitude));
+
+            if let Some(fade) = track_clone.fade.clone() {
+                source.add_effect(Fade::new(
+                    fade.in_start,
+                    fade.in_stop,
+                    fade.out_start,
+                    fade.out_stop,
+                    source.sample_rate(),
+                    source.channels(),
+                ));
+            }
+
             sink.append(source);
             ready.store(true, Ordering::Relaxed);
             playing.store(true, Ordering::Relaxed);
