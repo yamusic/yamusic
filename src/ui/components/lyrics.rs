@@ -21,62 +21,54 @@ impl<'a> LyricsWidget<'a> {
             progress,
         }
     }
-    fn parse_lrc(text: &str) -> Vec<(u64, String)> {
-        let mut entries = Vec::new();
-        for raw_line in text.lines() {
-            let mut rest = raw_line;
-            let mut timestamps: Vec<u64> = Vec::new();
 
-            while let Some(open) = rest.find('[') {
-                if let Some(close_rel) = rest[open..].find(']') {
-                    let close = open + close_rel;
-                    let tag = &rest[open + 1..close];
-                    if let Some(colon) = tag.find(':') {
-                        let (min_s, sec_s) = tag.split_at(colon);
-                        let sec_s = &sec_s[1..];
-                        if let Ok(min) = min_s.parse::<u64>() {
-                            let mut ms = 0u64;
-                            if let Some(dot) = sec_s.find('.') {
-                                if let Ok(sec) = sec_s[..dot].parse::<u64>() {
-                                    let frac = &sec_s[dot + 1..];
-                                    let mut frac_ms = 0u64;
-                                    if let Ok(f) = frac.parse::<u64>() {
-                                        frac_ms = match frac.len() {
-                                            3 => f,
-                                            2 => f * 10,
-                                            1 => f * 100,
-                                            _ => {
-                                                let mut s = frac.to_string();
-                                                s.truncate(3);
-                                                s.parse::<u64>().unwrap_or(0)
-                                            }
-                                        };
-                                    }
-                                    ms = (min * 60 + sec) * 1000 + frac_ms;
-                                }
-                            } else if let Ok(sec) = sec_s.parse::<u64>() {
-                                ms = (min * 60 + sec) * 1000;
-                            }
-                            timestamps.push(ms);
+    fn parse_lrc(text: &str) -> Vec<(u64, String)> {
+        let mut out = Vec::new();
+        let mut seq = 0usize;
+
+        for line in text.lines() {
+            let bytes = line.as_bytes();
+            let mut i = 0;
+            let mut timestamps = Vec::new();
+            let mut last_end = 0;
+
+            while i < bytes.len() {
+                if bytes[i] == b'[' {
+                    let start = i + 1;
+                    if let Some(end) = line[start..].find(']').map(|e| start + e) {
+                        let tag = &line[start..end];
+                        if let Some(ts) = parse_timestamp(tag) {
+                            timestamps.push(ts);
+                            last_end = end + 1;
                         }
+                        i = end + 1;
+                        continue;
+                    } else {
+                        break;
                     }
-                    let after = close + 1;
-                    rest = &rest[after..];
-                } else {
-                    break;
                 }
+                i += 1;
             }
 
-            let content = rest.trim().to_string();
-            if !timestamps.is_empty() && !content.is_empty() {
-                for t in timestamps {
-                    entries.push((t, content.clone()));
-                }
+            if timestamps.is_empty() {
+                continue;
+            }
+
+            let content_slice = line[last_end..].trim();
+            let content = if content_slice.is_empty() {
+                String::new()
+            } else {
+                content_slice.to_string()
+            };
+
+            for t in timestamps {
+                out.push((t, seq, content.clone()));
+                seq += 1;
             }
         }
 
-        entries.sort_by_key(|e| e.0);
-        entries
+        out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        out.into_iter().map(|(t, _, line)| (t, line)).collect()
     }
 }
 
@@ -104,11 +96,9 @@ impl<'a> Widget for LyricsWidget<'a> {
             let block_h = lines.len() as u16;
             let start_row = inner.y + inner.height.saturating_sub(block_h) / 2;
             for (i, line) in lines.iter().enumerate() {
-                let line_w = UnicodeWidthStr::width(*line) as u16;
-                let x = inner.x + (inner.width.saturating_sub(line_w)) / 2;
                 let y = start_row + i as u16;
                 if y < inner.y + inner.height {
-                    buf.set_stringn(x, y, line, inner.width as usize, Style::default());
+                    draw_centered(buf, inner, y, line, Style::default());
                 }
             }
             return;
@@ -123,11 +113,20 @@ impl<'a> Widget for LyricsWidget<'a> {
                 break;
             }
         }
-        let current_ts = parsed.get(idx).map(|(t, _)| *t).unwrap_or(0);
-        let next_ts = parsed
+        let len = parsed.len();
+        let first_ts = parsed.first().map(|(t, _)| *t).unwrap_or(0);
+        let before_first = pos_ms < first_ts;
+        let intro_wait_active = before_first && first_ts >= 3000;
+        let mut current_ts = parsed.get(idx).map(|(t, _)| *t).unwrap_or(0);
+        let mut next_ts = parsed
             .get(idx + 1)
             .map(|(t, _)| *t)
             .unwrap_or(current_ts + 1000);
+
+        if intro_wait_active {
+            current_ts = 0;
+            next_ts = first_ts;
+        }
         let denom = if next_ts > current_ts {
             next_ts - current_ts
         } else {
@@ -135,52 +134,80 @@ impl<'a> Widget for LyricsWidget<'a> {
         };
         let frac = ((pos_ms.saturating_sub(current_ts)) as f64) / (denom as f64);
         let center_row = inner.y + inner.height / 2;
-        if idx > 0 {
-            if let Some((_, prev_line)) = parsed.get(idx - 1) {
+        if idx > 0 && !intro_wait_active {
+            let prev_idx = idx - 1;
+            if let Some((_, prev_line)) = parsed.get(prev_idx) {
                 let y = center_row.saturating_sub(1);
                 if y >= inner.y && y < inner.y + inner.height {
-                    let w = UnicodeWidthStr::width(prev_line.as_str()) as u16;
-                    let x = inner.x + (inner.width.saturating_sub(w)) / 2;
-                    buf.set_stringn(
-                        x,
-                        y,
-                        prev_line,
-                        inner.width as usize,
-                        Style::default().fg(colors::NEUTRAL),
-                    );
+                    if !prev_line.is_empty() {
+                        draw_centered(
+                            buf,
+                            inner,
+                            y,
+                            prev_line,
+                            Style::default().fg(colors::NEUTRAL),
+                        );
+                    }
                 }
             }
         }
-        if let Some((_, cur_line)) = parsed.get(idx) {
-            let y = center_row;
-            if y >= inner.y && y < inner.y + inner.height {
-                let w = UnicodeWidthStr::width(cur_line.as_str()) as u16;
-                let x = inner.x + (inner.width.saturating_sub(w)) / 2;
-                buf.set_stringn(
-                    x,
+
+        let current_line = parsed.get(idx);
+        let has_next = idx + 1 < len;
+        let current_waiting = if intro_wait_active {
+            true
+        } else {
+            current_line
+                .map(|(_, line)| line.is_empty() && has_next)
+                .unwrap_or(false)
+        };
+
+        let y = center_row;
+        if y >= inner.y && y < inner.y + inner.height {
+            if current_waiting {
+                let frame = waiting_frame(pos_ms, 0);
+                draw_centered(
+                    buf,
+                    inner,
                     y,
-                    cur_line,
-                    inner.width as usize,
+                    &frame,
                     Style::default()
                         .fg(colors::ACCENT)
                         .add_modifier(Modifier::BOLD),
                 );
+            } else if let Some((_, line)) = current_line {
+                if !line.is_empty() {
+                    draw_centered(
+                        buf,
+                        inner,
+                        y,
+                        line,
+                        Style::default()
+                            .fg(colors::ACCENT)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                }
             }
         }
-        if let Some((_, next_line)) = parsed.get(idx + 1) {
-            let y = center_row.saturating_add(1);
-            if y >= inner.y && y < inner.y + inner.height {
-                let w = UnicodeWidthStr::width(next_line.as_str()) as u16;
-                let x = inner.x + (inner.width.saturating_sub(w)) / 2;
-                buf.set_stringn(
-                    x,
-                    y,
-                    next_line,
-                    inner.width as usize,
-                    Style::default().fg(colors::NEUTRAL),
-                );
+
+        let next_idx = if intro_wait_active { 0 } else { idx + 1 };
+        if next_idx < len {
+            if let Some((_, next_line)) = parsed.get(next_idx) {
+                let y = center_row.saturating_add(1);
+                if y >= inner.y && y < inner.y + inner.height {
+                    if !next_line.is_empty() {
+                        draw_centered(
+                            buf,
+                            inner,
+                            y,
+                            next_line,
+                            Style::default().fg(colors::NEUTRAL),
+                        );
+                    }
+                }
             }
         }
+
         let max_bar_w = inner.width.saturating_sub(8).min(30);
         if inner.height >= 3 && max_bar_w > 2 {
             let bar_x = inner.x + (inner.width.saturating_sub(max_bar_w)) / 2;
@@ -204,4 +231,88 @@ impl<'a> Widget for LyricsWidget<'a> {
             }
         }
     }
+}
+
+#[inline]
+fn parse_timestamp(tag: &str) -> Option<u64> {
+    let mut parts = tag.split(':');
+    let min = parts.next()?.parse::<u64>().ok()?;
+    let rest = parts.next()?;
+
+    let (sec, ms) = if let Some(dot) = rest.find('.') {
+        let sec = rest[..dot].parse::<u64>().ok()?;
+        if sec > 59 {
+            return None;
+        }
+
+        let mut frac_value = 0u64;
+        let mut digits = 0u32;
+        for b in rest[dot + 1..].bytes() {
+            if !b.is_ascii_digit() {
+                break;
+            }
+            if digits == 3 {
+                break;
+            }
+            frac_value = frac_value * 10 + (b - b'0') as u64;
+            digits += 1;
+        }
+
+        if digits == 0 {
+            return None;
+        }
+
+        let ms = match digits {
+            1 => frac_value * 100,
+            2 => frac_value * 10,
+            _ => frac_value,
+        };
+        (sec, ms)
+    } else {
+        let sec = rest.parse().ok()?;
+        if sec > 59 {
+            return None;
+        }
+        (sec, 0)
+    };
+
+    Some((min * 60 + sec) * 1000 + ms)
+}
+
+fn waiting_frame(pos_ms: u64, phase_ms: u64) -> String {
+    const FRAME_STEP_MS: u64 = 150;
+    const CHAR_LEVELS: [char; 3] = ['·', '•', '●'];
+    const STATES: [[usize; 3]; 9] = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [2, 0, 0],
+        [1, 1, 0],
+        [0, 2, 0],
+        [0, 1, 1],
+        [0, 0, 2],
+        [0, 0, 1],
+        [0, 0, 0],
+    ];
+
+    let step = ((pos_ms + phase_ms) / FRAME_STEP_MS) as usize % STATES.len();
+    let current_state = STATES[step];
+
+    let mut out = String::with_capacity(12);
+    for (i, &level_idx) in current_state.iter().enumerate() {
+        out.push(CHAR_LEVELS[level_idx]);
+        if i < 2 {
+            out.push(' ');
+        }
+    }
+
+    out
+}
+
+fn draw_centered(buf: &mut Buffer, area: Rect, y: u16, text: &str, style: Style) {
+    if y < area.y || y >= area.y + area.height {
+        return;
+    }
+    let width = UnicodeWidthStr::width(text) as u16;
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    buf.set_stringn(x, y, text, area.width as usize, style);
 }
