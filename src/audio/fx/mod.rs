@@ -5,8 +5,11 @@ use std::sync::{
 };
 use std::time::Duration;
 
+pub mod fade;
+
 pub trait Fx: Send + 'static {
     fn process(&mut self, sample: f32) -> f32;
+    fn seek(&mut self, _pos: Duration) {}
 }
 
 pub struct AudioAnalyzer {
@@ -93,7 +96,13 @@ impl<T: Source<Item = f32> + Send + 'static> Source for FxSource<T> {
     }
 
     fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
-        self.inner.try_seek(pos)
+        let res = self.inner.try_seek(pos);
+        if res.is_ok() {
+            for effect in &mut self.effects {
+                effect.seek(pos);
+            }
+        }
+        res
     }
 }
 
