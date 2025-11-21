@@ -37,17 +37,34 @@ pub struct StreamingDataSource {
 
 impl StreamingDataSource {
     pub fn new(client: Client, url: String, progress: Arc<TrackProgress>) -> Result<Self> {
-        let head = client.head(&url).send()?;
-        let total = head
-            .headers()
-            .get("content-length")
-            .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .ok_or_else(|| eyre!("content-length missing"))?;
+        let range_header = format!("bytes=0-{}", PREFETCH_SIZE - 1);
+        let resp = client.get(&url).header("Range", range_header).send()?;
+
+        let total = if let Some(range) = resp.headers().get("content-range") {
+            let s = range
+                .to_str()
+                .map_err(|_| eyre!("invalid content-range header"))?;
+            if let Some(slash) = s.find('/') {
+                s[slash + 1..]
+                    .parse::<u64>()
+                    .map_err(|_| eyre!("invalid total size in content-range"))?
+            } else {
+                return Err(eyre!("invalid content-range format"));
+            }
+        } else {
+            resp.content_length()
+                .ok_or_else(|| eyre!("content-length missing"))?
+        };
 
         progress.set_total_bytes(total);
+        let initial_data = resp.bytes()?.to_vec();
 
         let buffer = Arc::new(Mutex::new(BufferState::new(total)));
+        {
+            let mut b = buffer.lock().unwrap();
+            b.append(&initial_data, 0);
+        }
+
         let position = Arc::new(AtomicU64::new(0));
         let (tx_cmd, rx_cmd) = flume::unbounded();
         let (tx_res, rx_res) = flume::unbounded();
@@ -83,7 +100,6 @@ impl StreamingDataSource {
             thread_handle: Some(thread_handle),
         };
 
-        src.fetch(0, PREFETCH_SIZE as u64)?;
         src.wait_for(0, MIN_INITIAL_DATA)?;
         Ok(src)
     }
