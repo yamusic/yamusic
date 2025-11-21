@@ -57,6 +57,7 @@ impl StreamingDataSource {
         };
 
         progress.set_total_bytes(total);
+
         let initial_data = resp.bytes()?.to_vec();
 
         let buffer = Arc::new(Mutex::new(BufferState::new(total)));
@@ -64,6 +65,11 @@ impl StreamingDataSource {
             let mut b = buffer.lock().unwrap();
             b.append(&initial_data, 0);
         }
+
+        progress.set_buffered_bytes({
+            let b = buffer.lock().unwrap();
+            b.max_buffered_from_start()
+        });
 
         let position = Arc::new(AtomicU64::new(0));
         let (tx_cmd, rx_cmd) = flume::unbounded();
@@ -131,17 +137,17 @@ impl StreamingDataSource {
                                 continue;
                             }
 
-                            let maybe_end = {
+                            let maybe_buffered = {
                                 let mut buf = buffer.lock().unwrap();
                                 if buf.append(&data, start) {
-                                    Some(buf.end_pos())
+                                    Some(buf.max_buffered_from_start())
                                 } else {
                                     None
                                 }
                             };
 
-                            if let Some(end_pos) = maybe_end {
-                                prog.set_buffered_bytes(end_pos);
+                            if let Some(buffered_pos) = maybe_buffered {
+                                prog.set_buffered_bytes(buffered_pos);
                             }
                             let _ = tx_res.send(());
                         }
