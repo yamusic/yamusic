@@ -35,6 +35,7 @@ pub struct AudioPlayer {
     pub current_track: Option<Track>,
     pub volume: u8,
     pub is_muted: bool,
+    pub current_gain: f32,
 
     pub track_progress: Arc<TrackProgress>,
     pub is_ready: Arc<AtomicBool>,
@@ -70,6 +71,7 @@ impl AudioPlayer {
             current_track: None,
             volume: 100,
             is_muted: false,
+            current_gain: 1.0,
 
             track_progress: Arc::new(TrackProgress::default()),
             is_ready: Arc::new(AtomicBool::new(false)),
@@ -110,6 +112,20 @@ impl AudioPlayer {
 
     pub async fn play_track(&mut self, track: Track) {
         self.stop_track();
+
+        const TARGET_LOUDNESS: f32 = -13.0;
+        let mut gain = 1.0;
+
+        if let Some(r128) = &track.r128 {
+            let loudness_gain = TARGET_LOUDNESS - r128.i;
+            let peak_limit = -r128.tp;
+
+            let final_gain_db = loudness_gain.min(peak_limit);
+            gain = 10.0f32.powf(final_gain_db / 20.0);
+        }
+
+        self.current_gain = gain;
+        self.apply_volume();
 
         if let Some(task) = &self.current_playback_task {
             task.abort();
@@ -213,22 +229,31 @@ impl AudioPlayer {
         self.is_playing.store(is_paused, Ordering::Relaxed);
     }
 
+    fn apply_volume(&self) {
+        let volume = if self.is_muted {
+            0.0
+        } else {
+            (self.volume as f32 / 100.0) * self.current_gain
+        };
+        self.sink.set_volume(volume);
+    }
+
     pub fn set_volume(&mut self, volume: u8) {
         self.is_muted = false;
         self.volume = volume.min(200);
-        self.sink.set_volume(self.volume as f32 / 100.0);
+        self.apply_volume();
     }
 
     pub fn volume_up(&mut self, volume: u8) {
         self.is_muted = false;
         self.volume = (self.volume.saturating_add(volume)).min(200);
-        self.sink.set_volume(self.volume as f32 / 100.0);
+        self.apply_volume();
     }
 
     pub fn volume_down(&mut self, volume: u8) {
         self.is_muted = false;
         self.volume = self.volume.saturating_sub(volume);
-        self.sink.set_volume(self.volume as f32 / 100.0);
+        self.apply_volume();
     }
 
     pub fn seek_backwards(&mut self, seconds: u64) {
@@ -270,10 +295,6 @@ impl AudioPlayer {
 
     pub fn toggle_mute(&mut self) {
         self.is_muted = !self.is_muted;
-        self.sink.set_volume(if self.is_muted {
-            0.0
-        } else {
-            self.volume as f32 / 100.0
-        });
+        self.apply_volume();
     }
 }
