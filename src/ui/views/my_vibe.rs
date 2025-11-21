@@ -69,6 +69,64 @@ impl Vector3 {
     }
 }
 
+fn hex_to_vector3(hex: &str) -> Vector3 {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() == 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0;
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0;
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32 / 255.0;
+        Vector3::new(r, g, b)
+    } else {
+        Vector3::new(0.5, 0.5, 0.5)
+    }
+}
+
+fn shift_color(v: Vector3) -> Vector3 {
+    let brightness = (v.x + v.y + v.z) / 3.0;
+    if brightness < 0.5 {
+        Vector3::new(
+            (v.x + 0.2).min(1.0),
+            (v.y + 0.2).min(1.0),
+            (v.z + 0.2).min(1.0),
+        )
+    } else {
+        Vector3::new(v.x * 0.8, v.y * 0.8, v.z * 0.8)
+    }
+}
+
+const DEFAULT_PALETTE: [Vector3; 6] = [
+    Vector3 {
+        x: 0.9,
+        y: 0.1,
+        z: 0.5,
+    },
+    Vector3 {
+        x: 0.1,
+        y: 0.5,
+        z: 0.9,
+    },
+    Vector3 {
+        x: 0.9,
+        y: 0.8,
+        z: 0.1,
+    },
+    Vector3 {
+        x: 0.5,
+        y: 0.1,
+        z: 0.9,
+    },
+    Vector3 {
+        x: 0.1,
+        y: 0.9,
+        z: 0.5,
+    },
+    Vector3 {
+        x: 0.9,
+        y: 0.5,
+        z: 0.1,
+    },
+];
+
 #[inline(always)]
 fn fast_floor(x: f32) -> i32 {
     if x >= 0.0 { x as i32 } else { (x as i32) - 1 }
@@ -202,6 +260,10 @@ pub struct MyVibe {
     tx: Sender<RenderRequest>,
     rx: Receiver<RenderResult>,
     last_frame: Option<RenderResult>,
+    start_palette: [Vector3; 6],
+    target_palette: [Vector3; 6],
+    transition_progress: f32,
+    last_track_id: Option<String>,
 }
 
 impl Default for MyVibe {
@@ -225,6 +287,10 @@ impl Default for MyVibe {
             tx,
             rx,
             last_frame: None,
+            start_palette: DEFAULT_PALETTE,
+            target_palette: DEFAULT_PALETTE,
+            transition_progress: 1.0,
+            last_track_id: None,
         }
     }
 }
@@ -249,6 +315,46 @@ impl Component for MyVibe {
         let speed = 0.8 + self.smoothed_amplitude * 2.0;
         self.phase += dt * speed;
 
+        let current_track = ctx.audio_system.current_track();
+        let track_id = current_track.as_ref().map(|t| t.id.clone());
+
+        if track_id != self.last_track_id {
+            self.last_track_id = track_id;
+
+            for i in 0..6 {
+                self.start_palette[i] =
+                    self.start_palette[i].lerp(self.target_palette[i], self.transition_progress);
+            }
+
+            if let Some(track) = current_track {
+                if let Some(colors) = &track.derived_colors {
+                    let avg = hex_to_vector3(&colors.average);
+                    let accent = hex_to_vector3(&colors.accent);
+                    let wave = hex_to_vector3(&colors.wave_text);
+
+                    let avg_sec = shift_color(avg);
+                    let accent_sec = shift_color(accent);
+                    let wave_sec = shift_color(wave);
+
+                    self.target_palette = [avg, accent, wave, avg_sec, accent_sec, wave_sec];
+                } else {
+                    self.target_palette = DEFAULT_PALETTE;
+                }
+            } else {
+                self.target_palette = DEFAULT_PALETTE;
+            }
+
+            self.transition_progress = 0.0;
+        }
+
+        self.transition_progress = (self.transition_progress + dt * 0.5).min(1.0);
+
+        let mut current_palette = [Vector3::new(0.0, 0.0, 0.0); 6];
+        for i in 0..6 {
+            current_palette[i] =
+                self.start_palette[i].lerp(self.target_palette[i], self.transition_progress);
+        }
+
         let inner_area = area;
         let width = inner_area.width as usize;
         let height = inner_area.height as usize;
@@ -268,6 +374,7 @@ impl Component for MyVibe {
             time: self.phase,
             amplitude: self.smoothed_amplitude,
             bg_rgb: (bg_r, bg_g, bg_b),
+            palette: current_palette,
         };
         let _ = self.tx.try_send(req);
 
@@ -311,6 +418,7 @@ struct RenderRequest {
     time: f32,
     amplitude: f32,
     bg_rgb: (u8, u8, u8),
+    palette: [Vector3; 6],
 }
 
 struct RenderResult {
@@ -524,14 +632,7 @@ fn render_frame(req: RenderRequest) -> RenderResult {
         bg_b as f32 / 255.0,
     );
 
-    let palette = [
-        Vector3::new(0.9, 0.1, 0.5),
-        Vector3::new(0.1, 0.5, 0.9),
-        Vector3::new(0.9, 0.8, 0.1),
-        Vector3::new(0.5, 0.1, 0.9),
-        Vector3::new(0.1, 0.9, 0.5),
-        Vector3::new(0.9, 0.5, 0.1),
-    ];
+    let palette = req.palette;
 
     let mut data = vec![((0, 0, 0), (0, 0, 0)); width * height];
 
