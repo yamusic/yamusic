@@ -87,15 +87,19 @@ impl AudioPlayer {
         let sink = player.sink.clone();
         let event_tx = player.event_tx.clone();
         let playing = player.is_playing.clone();
+        let ready = player.is_ready.clone();
         let offset = player.playback_offset_millis.clone();
 
         thread::spawn(move || {
             loop {
-                let sink_pos = sink.get_pos();
-                let sink_ms = sink_pos.as_millis() as i64;
-                let base_ms = offset.load(Ordering::Relaxed);
-                let current_ms = sink_ms.saturating_add(base_ms).max(0) as u64;
-                progress.set_current_position(Duration::from_millis(current_ms));
+                if ready.load(Ordering::Relaxed) {
+                    let sink_pos = sink.get_pos();
+                    let sink_ms = sink_pos.as_millis() as i64;
+                    let base_ms = offset.load(Ordering::Relaxed);
+                    let current_ms = sink_ms.saturating_add(base_ms).max(0) as u64;
+                    progress.set_current_position(Duration::from_millis(current_ms));
+                }
+
                 let is_playing = playing.load(Ordering::Relaxed);
 
                 if is_playing && sink.empty() {

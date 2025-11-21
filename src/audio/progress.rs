@@ -81,10 +81,10 @@ impl TrackProgress {
     }
 
     pub fn reset(&self) {
+        self.set_buffered_bytes(0);
         self.set_current_position(Duration::ZERO);
         self.set_total_duration(Duration::ZERO);
         self.set_total_bytes(0);
-        self.set_buffered_bytes(0);
         self.set_bitrate(0);
     }
 }
