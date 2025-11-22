@@ -1,7 +1,14 @@
-pub mod engine;
+pub mod commands;
+pub mod config;
+pub mod controller;
 pub mod enums;
+pub mod error;
 pub mod fx;
+pub mod playback;
 pub mod progress;
 pub mod queue;
+pub mod state;
+pub mod stream_manager;
 pub mod system;
+pub mod traits;
 pub mod util;

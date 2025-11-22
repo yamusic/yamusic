@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
-use yandex_music::model::{playlist::Playlist, track::Track};
+use yandex_music::model::{album::Album, track::Track};
 
 use crate::{
     event::events::Event,
@@ -21,17 +21,17 @@ use crate::{
     util::colors,
 };
 
-pub struct PlaylistDetail {
-    pub playlist: Playlist,
+pub struct AlbumDetail {
+    pub album: Album,
     pub tracks: Vec<Track>,
     pub list_state: ListState,
     pub is_loading: bool,
 }
 
-impl PlaylistDetail {
-    pub fn new(playlist: Playlist) -> Self {
+impl AlbumDetail {
+    pub fn new(album: Album) -> Self {
         Self {
-            playlist,
+            album,
             tracks: Vec::new(),
             list_state: ListState::default(),
             is_loading: true,
@@ -40,7 +40,7 @@ impl PlaylistDetail {
 }
 
 #[async_trait]
-impl View for PlaylistDetail {
+impl View for AlbumDetail {
     fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, _ctx: &AppContext) {
         if self.is_loading && self.tracks.is_empty() {
             let spinner = Spinner::default()
@@ -55,18 +55,18 @@ impl View for PlaylistDetail {
             .constraints([Constraint::Length(6), Constraint::Min(0)])
             .split(area);
 
-        let title = self.playlist.title.clone();
-        let owner = self.playlist.owner.name.clone().unwrap_or_default();
-        let description = self.playlist.description.clone().unwrap_or_default();
-        let likes = self.playlist.likes_count;
-        let track_count = self.playlist.track_count;
-        let duration_secs = self.playlist.duration.as_secs();
-        let duration_str = format!(
-            "{:02}:{:02}:{:02}",
-            duration_secs / 3600,
-            (duration_secs % 3600) / 60,
-            duration_secs % 60
-        );
+        let title = self.album.title.clone().unwrap_or_default();
+        let artists = self
+            .album
+            .artists
+            .iter()
+            .map(|a| a.name.clone().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let year = self.album.year.map(|y| y.to_string()).unwrap_or_default();
+        let genre = self.album.genre.clone().unwrap_or_default();
+        let likes = self.album.likes_count.unwrap_or(0);
+        let track_count = self.album.track_count.unwrap_or(0);
 
         let header = Paragraph::new(vec![
             Line::from(Span::styled(
@@ -75,15 +75,9 @@ impl View for PlaylistDetail {
                     .add_modifier(Modifier::BOLD)
                     .fg(colors::PRIMARY),
             )),
-            Line::from(format!("By {}", owner)),
-            Line::from(format!(
-                "{} tracks • {} • {} likes",
-                track_count, duration_str, likes
-            )),
-            Line::from(Span::styled(
-                description,
-                Style::default().fg(ratatui::style::Color::Gray),
-            )),
+            Line::from(format!("By {}", artists)),
+            Line::from(format!("{} • {}", year, genre)),
+            Line::from(format!("{} tracks • {} likes", track_count, likes)),
         ])
         .block(
             Block::default()
@@ -187,7 +181,7 @@ impl View for PlaylistDetail {
     }
 
     async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
-        if let Event::PlaylistTracksFetched(tracks) = event {
+        if let Event::AlbumTracksFetched(tracks) = event {
             self.tracks = tracks.clone();
             self.is_loading = false;
             if !self.tracks.is_empty() {

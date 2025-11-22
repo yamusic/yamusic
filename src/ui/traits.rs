@@ -1,4 +1,7 @@
-use crate::ui::context::{AppContext, GlobalUiState};
+use crate::event::events::Event;
+use crate::ui::context::AppContext;
+use crate::ui::state::AppState;
+use async_trait::async_trait;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::{Frame, layout::Rect};
 
@@ -33,13 +36,15 @@ pub enum Direction {
     Right,
 }
 
-pub trait Component: Send {
-    fn render(&mut self, f: &mut Frame, area: Rect, ctx: &AppContext, state: &GlobalUiState);
-    fn handle_input(
+#[async_trait]
+pub trait View: Send {
+    fn render(&mut self, f: &mut Frame, area: Rect, state: &AppState, ctx: &AppContext);
+    async fn handle_input(
         &mut self,
         key: KeyEvent,
+        state: &AppState,
         ctx: &AppContext,
-        state: &GlobalUiState,
     ) -> Option<Action>;
-    fn on_event(&mut self, _event: &crate::event::events::Event) {}
+    async fn on_event(&mut self, _event: &Event, _ctx: &AppContext) {}
+    async fn on_mount(&mut self, _ctx: &AppContext) {}
 }

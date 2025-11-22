@@ -59,19 +59,22 @@ impl<'a> AppLayout<'a> {
 
         f.render_widget(sidebar_block, sidebar_area);
         f.render_widget(content_block, content_area);
-        let sidebar_items = vec!["My Vibe", "My Favorites", "Playlists"];
+        let sidebar_items = vec!["  Search", "  My Vibe", "  My Favorites", "  Playlists"];
         f.render_widget(
-            Sidebar::new(sidebar_items, self.app.state.sidebar_index),
+            Sidebar::new(sidebar_items, self.app.state.ui.sidebar_index),
             sidebar_inner,
         );
-        if let Some(active_view) = self.app.view_stack.last_mut() {
-            active_view.render(f, content_inner, &self.app.ctx, &self.app.state);
-        }
-        let track_title: &str;
+
+        self.app
+            .router
+            .render(f, content_inner, &self.app.state, &self.app.ctx);
+
+        let track_title: String;
         let track_artist: Option<String>;
 
-        if let Some(track) = self.app.ctx.audio_system.current_track() {
-            track_title = track.title.as_deref().unwrap_or("Unknown");
+        let current_track = self.app.ctx.audio_system.current_track();
+        if let Some(track) = &current_track {
+            track_title = track.title.clone().unwrap_or("Unknown".to_string());
             track_artist = Some(
                 track
                     .artists
@@ -81,13 +84,13 @@ impl<'a> AppLayout<'a> {
                     .join(", "),
             );
         } else {
-            track_title = "No track";
+            track_title = "No track".to_string();
             track_artist = None;
         }
 
         let player_widget = PlayerWidget::new(
             self.app.ctx.audio_system.track_progress(),
-            track_title,
+            &track_title,
             track_artist,
             self.app.ctx.audio_system.repeat_mode(),
             self.app.ctx.audio_system.is_shuffled(),

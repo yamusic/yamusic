@@ -1,16 +1,17 @@
 use std::{
     ops::{Deref, DerefMut},
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use color_eyre::eyre::Result;
 
+use crossterm::event::EventStream;
 use flume::{Receiver, Sender};
+use futures::{FutureExt, StreamExt};
 use ratatui::crossterm::{
     cursor,
     event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent,
     },
     terminal::{EnterAlternateScreen, LeaveAlternateScreen},
@@ -68,48 +69,41 @@ impl Tui {
 
     pub fn start(&mut self) {
         let event_tx = self.event_tx.clone();
-        thread::spawn(move || {
-            let tick_rate = Duration::from_millis(33);
-            let mut last_tick = Instant::now();
+        tokio::spawn(async move {
+            let mut reader = EventStream::new();
+            let mut tick_interval = tokio::time::interval(Duration::from_millis(33));
             loop {
-                let timeout = tick_rate
-                    .checked_sub(last_tick.elapsed())
-                    .unwrap_or_else(|| Duration::from_secs(0));
+                let tick_delay = tick_interval.tick();
+                let crossterm_event = reader.next().fuse();
 
-                if event::poll(timeout).unwrap() {
-                    let crossterm_event = event::read();
-                    match crossterm_event {
-                        Ok(evt) => match evt {
+                tokio::select! {
+                    _ = tick_delay => {
+                        let _ = event_tx.send_async(TerminalEvent::Tick).await;
+                    }
+                    Some(Ok(evt)) = crossterm_event => {
+                        match evt {
                             CrosstermEvent::Key(key) => {
                                 if key.kind == KeyEventKind::Press {
-                                    let _ = event_tx.send(TerminalEvent::Key(key));
+                                    let _ = event_tx.send_async(TerminalEvent::Key(key)).await;
                                 }
                             }
                             CrosstermEvent::Mouse(mouse) => {
-                                let _ = event_tx.send(TerminalEvent::Mouse(mouse));
+                                let _ = event_tx.send_async(TerminalEvent::Mouse(mouse)).await;
                             }
                             CrosstermEvent::Resize(x, y) => {
-                                let _ = event_tx.send(TerminalEvent::Resize(x, y));
+                                let _ = event_tx.send_async(TerminalEvent::Resize(x, y)).await;
                             }
                             CrosstermEvent::FocusLost => {
-                                let _ = event_tx.send(TerminalEvent::FocusLost);
+                                let _ = event_tx.send_async(TerminalEvent::FocusLost).await;
                             }
                             CrosstermEvent::FocusGained => {
-                                let _ = event_tx.send(TerminalEvent::FocusGained);
+                                let _ = event_tx.send_async(TerminalEvent::FocusGained).await;
                             }
                             CrosstermEvent::Paste(s) => {
-                                let _ = event_tx.send(TerminalEvent::Paste(s));
+                                let _ = event_tx.send_async(TerminalEvent::Paste(s)).await;
                             }
-                        },
-                        Err(_) => {
-                            let _ = event_tx.send(TerminalEvent::Error);
                         }
                     }
-                }
-
-                if last_tick.elapsed() >= tick_rate {
-                    let _ = event_tx.send(TerminalEvent::Tick);
-                    last_tick = Instant::now();
                 }
             }
         });

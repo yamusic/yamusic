@@ -1,22 +1,25 @@
 use crate::{
     audio::{
-        engine::AudioPlayer,
+        commands::AudioCommand,
+        controller::AudioController,
         enums::RepeatMode,
+        playback::PlaybackEngine,
         progress::TrackProgress,
         queue::{PlaybackContext, QueueManager},
+        stream_manager::StreamManager,
     },
     event::events::Event,
     http::ApiService,
 };
 use flume::Sender;
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::Arc;
 use yandex_music::model::{
     playlist::{Playlist, PlaylistTracks},
     track::Track,
 };
 
 pub struct AudioSystem {
-    player: AudioPlayer,
+    controller: AudioController,
     queue: QueueManager,
     event_tx: Sender<Event>,
     api: Arc<ApiService>,
@@ -24,11 +27,13 @@ pub struct AudioSystem {
 
 impl AudioSystem {
     pub async fn new(event_tx: Sender<Event>, api: Arc<ApiService>) -> color_eyre::Result<Self> {
-        let player = AudioPlayer::new(event_tx.clone(), api.clone()).await?;
+        let engine = PlaybackEngine::new()?;
+        let stream_manager = StreamManager::new(api.clone());
+        let controller = AudioController::new(engine, stream_manager, event_tx.clone());
         let queue = QueueManager::new(api.clone());
 
         Ok(Self {
-            player,
+            controller,
             queue,
             event_tx,
             api,
@@ -69,14 +74,35 @@ impl AudioSystem {
             .load(PlaybackContext::Playlist(playlist), tracks, 0)
             .await
         {
-            self.player.play_track(track).await;
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(track))
+                .await;
         }
 
         Ok(())
     }
 
+    pub async fn load_context(
+        &mut self,
+        context: PlaybackContext,
+        tracks: Vec<Track>,
+        index: usize,
+    ) -> Option<Track> {
+        let track = self.queue.load(context, tracks, index).await;
+        if let Some(t) = &track {
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(t.clone()))
+                .await;
+        }
+        track
+    }
+
     pub async fn load_tracks(&mut self, tracks: Vec<Track>) {
-        self.queue.load(PlaybackContext::List, tracks, 0).await;
+        if let Some(track) = self.queue.load(PlaybackContext::List, tracks, 0).await {
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(track))
+                .await;
+        }
     }
 
     pub async fn play_single_track(&mut self, track: Track) {
@@ -85,19 +111,25 @@ impl AudioSystem {
             .load(PlaybackContext::Track, vec![track], 0)
             .await
         {
-            self.player.play_track(track).await;
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(track))
+                .await;
         }
     }
 
     pub async fn play_track_at_index(&mut self, index: usize) {
         if let Some(track) = self.queue.play_track_at_index(index).await {
-            let _ = self.player.play_track(track).await;
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(track))
+                .await;
         }
     }
 
     pub async fn on_track_ended(&mut self) {
         if let Some(next_track) = self.queue.get_next_track().await {
-            let _ = self.player.play_track(next_track).await;
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(next_track))
+                .await;
         } else {
             let _ = self.event_tx.send(Event::TrackEnded);
         }
@@ -105,13 +137,17 @@ impl AudioSystem {
 
     pub async fn play_next(&mut self) {
         if let Some(next_track) = self.queue.get_next_track().await {
-            let _ = self.player.play_track(next_track).await;
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(next_track))
+                .await;
         }
     }
 
     pub async fn play_previous(&mut self) {
         if let Some(prev_track) = self.queue.get_previous_track() {
-            let _ = self.player.play_track(prev_track).await;
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(prev_track))
+                .await;
         }
     }
 
@@ -123,36 +159,57 @@ impl AudioSystem {
         self.queue.play_next(track);
     }
 
-    pub fn play_pause(&mut self) {
-        self.player.play_pause();
+    pub async fn play_pause(&mut self) {
+        if self.controller.is_playing() {
+            self.controller.handle_command(AudioCommand::Pause).await;
+        } else {
+            self.controller.handle_command(AudioCommand::Resume).await;
+        }
     }
 
-    pub fn stop(&mut self) {
-        self.player.stop_track();
+    pub async fn stop(&mut self) {
+        self.controller.handle_command(AudioCommand::Stop).await;
     }
 
     pub fn set_volume(&mut self, volume: u8) {
-        self.player.set_volume(volume);
+        self.controller.set_volume_u8(volume);
     }
 
     pub fn volume_up(&mut self, volume: u8) {
-        self.player.volume_up(volume);
+        self.controller.volume_up(volume);
     }
 
     pub fn volume_down(&mut self, volume: u8) {
-        self.player.volume_down(volume);
+        self.controller.volume_down(volume);
     }
 
-    pub fn seek_backwards(&mut self, seconds: u64) {
-        self.player.seek_backwards(seconds);
+    pub async fn seek_backwards(&mut self, seconds: u64) {
+        let (current_ms, _) = self.controller.track_progress.get_progress();
+        let delta_ms = seconds * 1000;
+        let new_pos_ms = current_ms.saturating_sub(delta_ms);
+        self.controller
+            .handle_command(AudioCommand::Seek(std::time::Duration::from_millis(
+                new_pos_ms,
+            )))
+            .await;
     }
 
-    pub fn seek_forwards(&mut self, seconds: u64) {
-        self.player.seek_forwards(seconds);
+    pub async fn seek_forwards(&mut self, seconds: u64) {
+        let (current_ms, total_ms) = self.controller.track_progress.get_progress();
+        let delta_ms = seconds * 1000;
+        let mut new_pos_ms = current_ms.saturating_add(delta_ms);
+        if total_ms > 0 {
+            new_pos_ms = new_pos_ms.min(total_ms);
+        }
+        self.controller
+            .handle_command(AudioCommand::Seek(std::time::Duration::from_millis(
+                new_pos_ms,
+            )))
+            .await;
     }
 
     pub fn toggle_mute(&mut self) {
-        self.player.toggle_mute();
+        self.controller.toggle_mute();
     }
 
     pub fn toggle_repeat_mode(&mut self) {
@@ -163,12 +220,12 @@ impl AudioSystem {
         self.queue.toggle_shuffle();
     }
 
-    pub fn current_track(&self) -> &Option<Track> {
-        &self.player.current_track
+    pub fn current_track(&self) -> Option<Track> {
+        self.controller.current_track()
     }
 
     pub fn is_playing(&self) -> bool {
-        self.player.is_playing.load(Ordering::Relaxed)
+        self.controller.is_playing()
     }
 
     pub fn repeat_mode(&self) -> RepeatMode {
@@ -180,15 +237,15 @@ impl AudioSystem {
     }
 
     pub fn volume(&self) -> u8 {
-        self.player.volume
+        self.controller.volume()
     }
 
     pub fn is_muted(&self) -> bool {
-        self.player.is_muted
+        self.controller.is_muted()
     }
 
     pub fn track_progress(&self) -> &Arc<TrackProgress> {
-        &self.player.track_progress
+        &self.controller.track_progress
     }
 
     pub fn queue(&self) -> &Vec<Track> {
@@ -204,6 +261,6 @@ impl AudioSystem {
     }
 
     pub fn current_amplitude(&self) -> f32 {
-        f32::from_bits(self.player.current_amplitude.load(Ordering::Relaxed))
+        self.controller.current_amplitude()
     }
 }

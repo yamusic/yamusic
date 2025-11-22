@@ -3,15 +3,20 @@ use std::sync::Arc;
 use yandex_music::{
     YandexMusicClient,
     api::{
+        album::get_album::GetAlbumOptions,
+        artist::get_artist_tracks::ArtistTracksOptions,
         playlist::{get_all_playlists::GetAllPlaylistsOptions, get_playlists::GetPlaylistsOptions},
+        search::get_search::SearchOptions,
         track::{
             get_file_info::GetFileInfoOptions, get_lyrics::GetLyricsOptions,
             get_similar_tracks::GetSimilarTracksOptions, get_tracks::GetTracksOptions,
         },
     },
     model::{
+        album::Album,
         info::{file_info::Codec, lyrics::LyricsFormat},
         playlist::Playlist,
+        search::Search,
         track::{PartialTrack, Track},
     },
 };
@@ -38,6 +43,11 @@ impl ApiService {
             .ok_or(color_eyre::eyre::eyre!("No user id found"))?;
 
         Ok(Self { client, user_id })
+    }
+
+    pub async fn search(&self, query: &str) -> color_eyre::Result<Search> {
+        let opts = SearchOptions::new(query);
+        Ok(self.client.search(&opts).await?)
     }
 
     pub async fn fetch_liked_tracks(&self) -> color_eyre::Result<Playlist> {
@@ -125,5 +135,15 @@ impl ApiService {
             }
             Err(_) => Ok(None),
         }
+    }
+
+    pub async fn fetch_album_with_tracks(&self, album_id: u32) -> color_eyre::Result<Album> {
+        let opts = GetAlbumOptions::new(album_id).with_tracks();
+        Ok(self.client.get_album(&opts).await?)
+    }
+
+    pub async fn fetch_artist_tracks(&self, artist_id: String) -> color_eyre::Result<Vec<Track>> {
+        let opts = ArtistTracksOptions::new(artist_id);
+        Ok(self.client.get_artist_tracks(&opts).await?.tracks)
     }
 }

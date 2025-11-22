@@ -1,11 +1,21 @@
+pub mod album_detail;
+pub mod artist_detail;
+pub mod liked_tracks;
 pub mod lyrics;
 pub mod my_vibe;
 pub mod playlist_detail;
 pub mod playlists;
+pub mod search;
+pub mod track_detail;
 pub mod track_list;
 
+pub use album_detail::AlbumDetail;
+pub use artist_detail::ArtistDetail;
+pub use liked_tracks::LikedTracks;
 pub use lyrics::Lyrics;
 pub use my_vibe::MyVibe;
 pub use playlist_detail::PlaylistDetail;
 pub use playlists::Playlists;
+pub use search::Search;
+pub use track_detail::TrackDetail;
 pub use track_list::TrackList;
