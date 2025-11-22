@@ -9,6 +9,7 @@ pub struct QueueManager {
 
     pub queue: Vec<Track>,
     pub original_queue: Option<Vec<Track>>,
+    pub shuffled_index_map: Vec<Option<usize>>,
     pub current_track_index: usize,
 
     pub repeat_mode: RepeatMode,
@@ -36,6 +37,7 @@ impl QueueManager {
             api,
             queue: Vec::new(),
             original_queue: None,
+            shuffled_index_map: Vec::new(),
             current_track_index: 0,
             repeat_mode: RepeatMode::None,
             is_shuffled: false,
@@ -49,7 +51,7 @@ impl QueueManager {
     pub async fn load(
         &mut self,
         context: PlaybackContext,
-        tracks: Vec<Track>,
+        mut tracks: Vec<Track>,
         start_index: usize,
     ) -> Option<Track> {
         if tracks.is_empty() || start_index >= tracks.len() {
@@ -58,36 +60,48 @@ impl QueueManager {
 
         self.playback_context = context;
         self.original_queue = None;
+        self.shuffled_index_map.clear();
         self.current_track_index = 0;
+        self.history.clear();
+        self.history_index = 0;
 
         match self.playback_context {
             PlaybackContext::Playlist(_)
             | PlaybackContext::Artist(_)
             | PlaybackContext::Album(_)
             | PlaybackContext::List => {
+                if start_index > 0 {
+                    tracks.drain(0..start_index);
+                }
                 self.queue = tracks;
-                self.current_track_index = start_index;
+                self.current_track_index = 0;
             }
             PlaybackContext::Track | PlaybackContext::Unknown => {
                 self.queue.clear();
-                self.queue.push(tracks[start_index].clone());
-                self.current_track_index = 0;
+                if start_index < tracks.len() {
+                    let track = tracks.swap_remove(start_index);
+                    let track_id = track.id.clone();
+                    self.queue.push(track);
+                    self.current_track_index = 0;
 
-                let track_id = tracks[start_index].id.clone();
-                let similar_tracks = self
-                    .api
-                    .fetch_similar_tracks(track_id)
-                    .await
-                    .unwrap_or_default();
-                for sim_track in similar_tracks {
-                    self.queue.push(sim_track);
+                    let similar_tracks = self
+                        .api
+                        .fetch_similar_tracks(track_id)
+                        .await
+                        .unwrap_or_default();
+                    for sim_track in similar_tracks {
+                        self.queue.push(sim_track);
+                    }
                 }
             }
         }
 
         let track = self.queue.get(self.current_track_index).cloned();
         if let Some(t) = &track {
-            self.add_to_history(t.clone());
+            if self.history.is_empty() || self.history.last().map(|h| h.id != t.id).unwrap_or(true)
+            {
+                self.add_to_history(t.clone());
+            }
         }
         track
     }
@@ -97,7 +111,6 @@ impl QueueManager {
             return None;
         }
 
-        // If queue looping is enabled with the context being unclear, disable queue looping
         if self.repeat_mode == RepeatMode::All
             && let PlaybackContext::Unknown = self.playback_context
         {
@@ -143,45 +156,56 @@ impl QueueManager {
     pub fn get_previous_track(&mut self) -> Option<Track> {
         if self.history_index >= 2 {
             self.history_index -= 2;
-
             let track = self.history.get(self.history_index).cloned();
             self.history_index += 1;
 
-            if let Some(ref t) = track
-                && let Some(index) = self.queue.iter().position(|q| q.id == t.id)
-            {
-                self.current_track_index = index;
+            if let Some(t) = track {
+                if let Some(index) = self.queue.iter().position(|q| q.id == t.id) {
+                    self.current_track_index = index;
+                } else {
+                    self.queue.clear();
+                    self.queue.push(t.clone());
+                    if self.is_shuffled {
+                        self.shuffled_index_map.clear();
+                        self.shuffled_index_map.push(None);
+                    }
+                    self.current_track_index = 0;
+                    self.playback_context = PlaybackContext::Unknown;
+                }
+
+                self.is_first_play = false;
+                return Some(t);
             }
-
-            self.is_first_play = false;
-
-            track
-        } else {
-            None
         }
+        None
     }
 
     pub fn queue_track(&mut self, track: Track) {
         self.queue.insert(self.current_track_index + 1, track);
+        if self.is_shuffled {
+            self.shuffled_index_map
+                .insert(self.current_track_index + 1, None);
+        }
     }
 
     pub fn play_next(&mut self, track: Track) {
         self.queue.insert(self.current_track_index + 1, track);
+        if self.is_shuffled {
+            self.shuffled_index_map
+                .insert(self.current_track_index + 1, None);
+        }
     }
 
     pub fn toggle_repeat_mode(&mut self) {
         self.repeat_mode = match self.repeat_mode {
-            RepeatMode::None => {
-                // Only allow RepeatMode::All if the context is clear
-                match self.playback_context {
-                    PlaybackContext::Album(_)
-                    | PlaybackContext::Artist(_)
-                    | PlaybackContext::Playlist(_)
-                    | PlaybackContext::Track
-                    | PlaybackContext::List => RepeatMode::All,
-                    _ => RepeatMode::None,
-                }
-            }
+            RepeatMode::None => match self.playback_context {
+                PlaybackContext::Album(_)
+                | PlaybackContext::Artist(_)
+                | PlaybackContext::Playlist(_)
+                | PlaybackContext::Track
+                | PlaybackContext::List => RepeatMode::All,
+                _ => RepeatMode::None,
+            },
             RepeatMode::All => RepeatMode::Single,
             RepeatMode::Single => RepeatMode::None,
         };
@@ -191,30 +215,46 @@ impl QueueManager {
         self.is_shuffled = !self.is_shuffled;
         if self.is_shuffled {
             self.original_queue = Some(self.queue.clone());
+            let mut indices: Vec<Option<usize>> = (0..self.queue.len()).map(Some).collect();
 
             if !self.queue.is_empty() && self.current_track_index < self.queue.len() {
                 let current_track = self.queue.remove(self.current_track_index);
-                self.queue.shuffle(&mut rng());
+                let current_index = indices.remove(self.current_track_index);
+
+                let mut combined: Vec<(Track, Option<usize>)> =
+                    self.queue.drain(..).zip(indices.drain(..)).collect();
+                combined.shuffle(&mut rng());
+
+                for (t, i) in combined {
+                    self.queue.push(t);
+                    indices.push(i);
+                }
+
                 self.queue.insert(self.current_track_index, current_track);
+                indices.insert(self.current_track_index, current_index);
             } else {
-                self.queue.shuffle(&mut rng());
+                let mut combined: Vec<(Track, Option<usize>)> =
+                    self.queue.drain(..).zip(indices.drain(..)).collect();
+                combined.shuffle(&mut rng());
+
+                for (t, i) in combined {
+                    self.queue.push(t);
+                    indices.push(i);
+                }
                 self.current_track_index = 0;
             }
+            self.shuffled_index_map = indices;
         } else if let Some(original_queue) = self.original_queue.take() {
-            let current_track_id = self
-                .queue
+            let original_index = self
+                .shuffled_index_map
                 .get(self.current_track_index)
-                .map(|t| t.id.clone());
+                .and_then(|i| *i);
 
             self.queue = original_queue;
+            self.shuffled_index_map.clear();
 
-            if let Some(track_id) = current_track_id {
-                // TODO: This assumes that the track_id is unique, which is not always the case
-                if let Some(new_index) = self.queue.iter().position(|t| t.id == track_id) {
-                    self.current_track_index = new_index;
-                } else {
-                    self.current_track_index = 0;
-                }
+            if let Some(index) = original_index {
+                self.current_track_index = index;
             } else {
                 self.current_track_index = 0;
             }
@@ -228,18 +268,30 @@ impl QueueManager {
     }
 
     pub async fn play_track_at_index(&mut self, index: usize) -> Option<Track> {
-        if index < self.queue.len() {
-            self.current_track_index = index;
-            let track = self.queue.get(self.current_track_index).cloned();
-            if let Some(t) = &track {
-                self.add_to_history(t.clone());
-            }
-
-            self.is_first_play = false;
-
-            track
-        } else {
-            None
+        if index >= self.queue.len() {
+            return None;
         }
+
+        if index > self.current_track_index {
+            let remove_start = self.current_track_index + 1;
+            if remove_start < index {
+                self.queue.drain(remove_start..index);
+                if self.is_shuffled {
+                    self.shuffled_index_map.drain(remove_start..index);
+                }
+            }
+            self.current_track_index += 1;
+        } else {
+            self.current_track_index = index;
+        }
+
+        let track = self.queue.get(self.current_track_index).cloned();
+        if let Some(t) = &track {
+            self.add_to_history(t.clone());
+        }
+
+        self.is_first_play = false;
+
+        track
     }
 }

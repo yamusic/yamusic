@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -9,8 +10,10 @@ use ratatui::{
 
 use crate::{
     ui::{
-        context::{AppContext, GlobalUiState},
-        traits::{Action, Component},
+        context::AppContext,
+        state::AppState,
+        traits::{Action, View},
+        util::get_active_track_icon,
     },
     util::colors,
 };
@@ -27,33 +30,41 @@ impl Default for TrackList {
     }
 }
 
-impl Component for TrackList {
-    fn render(&mut self, f: &mut Frame, area: Rect, ctx: &AppContext, state: &GlobalUiState) {
-        if state.is_loading {
-            let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let symbol = spinner[state.spinner_index % spinner.len()];
-            let text = format!("{} Loading...", symbol);
-            let x = area.x + (area.width.saturating_sub(text.len() as u16)) / 2;
-            let y = area.y + area.height / 2;
-
-            f.buffer_mut()
-                .set_string(x, y, text, Style::default().fg(colors::PRIMARY));
+#[async_trait]
+impl View for TrackList {
+    fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, ctx: &AppContext) {
+        let queue = ctx.audio_system.queue();
+        if queue.is_empty() {
+            let no_tracks = List::new(vec![ListItem::new("No tracks")]).highlight_style(
+                Style::default()
+                    .fg(colors::PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            );
+            f.render_widget(no_tracks, area);
             return;
         }
 
-        let queue = ctx.audio_system.queue();
         let current_index = if queue.is_empty() {
             None
         } else {
             Some(ctx.audio_system.current_track_index())
         };
+        let is_playing = ctx.audio_system.is_playing();
 
         let items: Vec<ListItem> = queue
             .iter()
             .enumerate()
             .map(|(i, track)| {
+                let is_current = Some(i) == current_index;
+                let prefix = if is_current {
+                    format!("{} ", get_active_track_icon(is_playing))
+                } else {
+                    "  ".to_string()
+                };
+
                 let title = track.title.as_deref().unwrap_or("Unknown Title");
-                let mut spans = Vec::with_capacity(3);
+                let mut spans = Vec::with_capacity(4);
+                spans.push(Span::raw(prefix));
                 spans.push(Span::raw(title));
                 spans.push(Span::raw(" - "));
 
@@ -70,7 +81,7 @@ impl Component for TrackList {
 
                 let mut item = ListItem::new(Line::from(spans));
 
-                if Some(i) == current_index {
+                if is_current {
                     item = item.style(
                         Style::default()
                             .fg(colors::SECONDARY)
@@ -96,11 +107,11 @@ impl Component for TrackList {
         f.render_stateful_widget(list, area, &mut self.list_state);
     }
 
-    fn handle_input(
+    async fn handle_input(
         &mut self,
         key: KeyEvent,
+        _state: &AppState,
         ctx: &AppContext,
-        _state: &GlobalUiState,
     ) -> Option<Action> {
         let queue_len = ctx.audio_system.queue().len();
         match key.code {

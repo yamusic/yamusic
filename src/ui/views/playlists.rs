@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -5,35 +6,75 @@ use ratatui::{
     style::{Modifier, Style},
     widgets::{List, ListItem, ListState},
 };
+use tokio::task::JoinHandle;
+use yandex_music::model::playlist::Playlist;
 
 use crate::{
+    event::events::Event,
     ui::{
-        context::{AppContext, GlobalUiState},
-        traits::{Action, Component},
+        components::spinner::Spinner,
+        context::AppContext,
+        state::AppState,
+        traits::{Action, View},
     },
     util::colors,
 };
 
-#[derive(Default)]
 pub struct Playlists {
     pub list_state: ListState,
+    pub playlists: Vec<Playlist>,
+    pub is_loading: bool,
+    pub fetch_handle: Option<JoinHandle<()>>,
 }
 
-impl Component for Playlists {
-    fn render(&mut self, f: &mut Frame, area: Rect, _ctx: &AppContext, state: &GlobalUiState) {
-        if state.is_loading && state.playlists.is_empty() {
-            let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let symbol = spinner[state.spinner_index % spinner.len()];
-            let text = format!("{} Loading playlists...", symbol);
-            let x = area.x + (area.width.saturating_sub(text.len() as u16)) / 2;
-            let y = area.y + area.height / 2;
+impl Default for Playlists {
+    fn default() -> Self {
+        Self {
+            list_state: ListState::default(),
+            playlists: Vec::new(),
+            is_loading: true,
+            fetch_handle: None,
+        }
+    }
+}
 
-            f.buffer_mut()
-                .set_string(x, y, text, Style::default().fg(colors::PRIMARY));
+impl Drop for Playlists {
+    fn drop(&mut self) {
+        if let Some(handle) = self.fetch_handle.take() {
+            handle.abort();
+        }
+    }
+}
+
+#[async_trait]
+impl View for Playlists {
+    async fn on_mount(&mut self, ctx: &AppContext) {
+        self.is_loading = true;
+        let api = ctx.api.clone();
+        let tx = ctx.event_tx.clone();
+        let handle = tokio::spawn(async move {
+            match api.fetch_all_playlists().await {
+                Ok(playlists) => {
+                    let _ = tx.send(Event::PlaylistsFetched(playlists));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchError(e.to_string()));
+                }
+            }
+        });
+        self.fetch_handle = Some(handle);
+    }
+
+    fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, _ctx: &AppContext) {
+        if self.is_loading && self.playlists.is_empty() {
+            let spinner = Spinner::default()
+                .with_style(Style::default().fg(colors::PRIMARY))
+                .with_label("Loading playlists...".to_string());
+            f.render_widget(spinner, area);
             return;
         }
 
-        let items: Vec<ListItem> = state
+        let items: Vec<ListItem> = self
             .playlists
             .iter()
             .map(|playlist| {
@@ -52,20 +93,20 @@ impl Component for Playlists {
             )
             .highlight_symbol("> ");
 
-        if !state.playlists.is_empty() && self.list_state.selected().is_none() {
+        if !self.playlists.is_empty() && self.list_state.selected().is_none() {
             self.list_state.select(Some(0));
         }
 
         f.render_stateful_widget(list, area, &mut self.list_state);
     }
 
-    fn handle_input(
+    async fn handle_input(
         &mut self,
         key: KeyEvent,
+        _state: &AppState,
         ctx: &AppContext,
-        state: &GlobalUiState,
     ) -> Option<Action> {
-        let len = state.playlists.len();
+        let len = self.playlists.len();
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
                 if len > 0 {
@@ -89,7 +130,7 @@ impl Component for Playlists {
             }
             KeyCode::Enter => {
                 if let Some(i) = self.list_state.selected() {
-                    if let Some(playlist) = state.playlists.get(i) {
+                    if let Some(playlist) = self.playlists.get(i) {
                         let _ = ctx
                             .event_tx
                             .send(crate::event::events::Event::PlaylistSelected(
@@ -100,6 +141,13 @@ impl Component for Playlists {
                 None
             }
             _ => None,
+        }
+    }
+
+    async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
+        if let Event::PlaylistsFetched(playlists) = event {
+            self.playlists = playlists.clone();
+            self.is_loading = false;
         }
     }
 }

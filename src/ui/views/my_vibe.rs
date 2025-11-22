@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use flume::{Receiver, Sender};
 use lazy_static::lazy_static;
 use ratatui::crossterm::event::KeyEvent;
@@ -7,8 +8,9 @@ use std::time::SystemTime;
 
 use crate::{
     ui::{
-        context::{AppContext, GlobalUiState},
-        traits::{Action, Component},
+        context::AppContext,
+        state::AppState,
+        traits::{Action, View},
     },
     util::colors,
 };
@@ -295,8 +297,9 @@ impl Default for MyVibe {
     }
 }
 
-impl Component for MyVibe {
-    fn render(&mut self, f: &mut Frame, area: Rect, ctx: &AppContext, _state: &GlobalUiState) {
+#[async_trait]
+impl View for MyVibe {
+    fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, ctx: &AppContext) {
         let now = SystemTime::now();
         let dt = now
             .duration_since(self.last_tick)
@@ -402,11 +405,11 @@ impl Component for MyVibe {
         }
     }
 
-    fn handle_input(
+    async fn handle_input(
         &mut self,
         _key: KeyEvent,
+        _state: &AppState,
         _ctx: &AppContext,
-        _state: &GlobalUiState,
     ) -> Option<Action> {
         None
     }
