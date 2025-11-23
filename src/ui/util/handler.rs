@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use ratatui::crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use tracing::info;
 use yandex_music::model::info::lyrics::LyricsFormat;
@@ -9,6 +10,7 @@ use crate::{
     ui::{
         app::App,
         input::InputHandler,
+        message::AppMessage,
         traits::Action,
         tui::{TerminalEvent, Tui},
         views::{AlbumDetail, ArtistDetail, PlaylistDetail, TrackDetail},
@@ -234,6 +236,22 @@ impl EventHandler {
 
     async fn handle_key_event(app: &mut App, evt: KeyEvent) {
         if evt.kind == KeyEventKind::Press {
+            match evt.code {
+                KeyCode::Char('c') if evt.modifiers == KeyModifiers::CONTROL => {
+                    app.update(AppMessage::Quit).await;
+                    return;
+                }
+                KeyCode::Tab => {
+                    app.update(AppMessage::NextSidebarItem).await;
+                    return;
+                }
+                KeyCode::BackTab => {
+                    app.update(AppMessage::PreviousSidebarItem).await;
+                    return;
+                }
+                _ => {}
+            }
+
             let action = app.router.handle_input(evt, &app.state, &app.ctx).await;
 
             if let Some(action) = action {
