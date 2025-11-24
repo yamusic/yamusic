@@ -1,12 +1,20 @@
 use async_trait::async_trait;
 use flume::{Receiver, Sender};
 use lazy_static::lazy_static;
-use ratatui::crossterm::event::KeyEvent;
-use ratatui::{Frame, layout::Rect, style::Color};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::{
+    Frame,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+};
+use rayon::prelude::*;
 use std::thread;
-use std::time::SystemTime;
+use std::time::Instant;
+use yandex_music::model::landing::wave::LandingWave;
 
 use crate::{
+    event::events::Event,
     ui::{
         context::AppContext,
         state::AppState,
@@ -46,6 +54,13 @@ lazy_static! {
         [0.0, 1.0, -1.0],
         [0.0, -1.0, -1.0]
     ];
+    static ref GRADIENTS_TABLE: [[f32; 3]; 512] = {
+        let mut table = [[0.0; 3]; 512];
+        for i in 0..512 {
+            table[i] = GRADIENTS3[PERMUTATION[i] as usize % 12];
+        }
+        table
+    };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -192,25 +207,16 @@ fn simplex_noise(x: f32, y: f32, z: f32) -> f32 {
     let jj = j & 255;
     let kk = k & 255;
 
-    let gi0 = PERMUTATION
-        [(ii + PERMUTATION[(jj + PERMUTATION[kk as usize] as i32) as usize] as i32) as usize]
-        as usize
-        % 12;
-    let gi1 = PERMUTATION[(ii
-        + i1
-        + PERMUTATION[(jj + j1 + PERMUTATION[(kk + k1) as usize] as i32) as usize] as i32)
-        as usize] as usize
-        % 12;
-    let gi2 = PERMUTATION[(ii
-        + i2
-        + PERMUTATION[(jj + j2 + PERMUTATION[(kk + k2) as usize] as i32) as usize] as i32)
-        as usize] as usize
-        % 12;
-    let gi3 = PERMUTATION[(ii
-        + 1
-        + PERMUTATION[(jj + 1 + PERMUTATION[(kk + 1) as usize] as i32) as usize] as i32)
-        as usize] as usize
-        % 12;
+    let idx0 = (ii + PERMUTATION[(jj + PERMUTATION[kk as usize] as i32) as usize] as i32) as usize;
+    let idx1 =
+        (ii + i1 + PERMUTATION[(jj + j1 + PERMUTATION[(kk + k1) as usize] as i32) as usize] as i32)
+            as usize;
+    let idx2 =
+        (ii + i2 + PERMUTATION[(jj + j2 + PERMUTATION[(kk + k2) as usize] as i32) as usize] as i32)
+            as usize;
+    let idx3 =
+        (ii + 1 + PERMUTATION[(jj + 1 + PERMUTATION[(kk + 1) as usize] as i32) as usize] as i32)
+            as usize;
 
     let mut n0 = 0.0;
     let mut n1 = 0.0;
@@ -220,25 +226,25 @@ fn simplex_noise(x: f32, y: f32, z: f32) -> f32 {
     let t0 = 0.6 - x0 * x0 - y0 * y0 - z0 * z0;
     if t0 > 0.0 {
         let t = t0 * t0;
-        n0 = t * t * dot(&GRADIENTS3[gi0], x0, y0, z0);
+        n0 = t * t * dot(&GRADIENTS_TABLE[idx0], x0, y0, z0);
     }
 
     let t1 = 0.6 - x1 * x1 - y1 * y1 - z1 * z1;
     if t1 > 0.0 {
         let t = t1 * t1;
-        n1 = t * t * dot(&GRADIENTS3[gi1], x1, y1, z1);
+        n1 = t * t * dot(&GRADIENTS_TABLE[idx1], x1, y1, z1);
     }
 
     let t2 = 0.6 - x2 * x2 - y2 * y2 - z2 * z2;
     if t2 > 0.0 {
         let t = t2 * t2;
-        n2 = t * t * dot(&GRADIENTS3[gi2], x2, y2, z2);
+        n2 = t * t * dot(&GRADIENTS_TABLE[idx2], x2, y2, z2);
     }
 
     let t3 = 0.6 - x3 * x3 - y3 * y3 - z3 * z3;
     if t3 > 0.0 {
         let t = t3 * t3;
-        n3 = t * t * dot(&GRADIENTS3[gi3], x3, y3, z3);
+        n3 = t * t * dot(&GRADIENTS_TABLE[idx3], x3, y3, z3);
     }
 
     32.0 * (n0 + n1 + n2 + n3)
@@ -256,43 +262,79 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 }
 
 pub struct MyVibe {
-    last_tick: SystemTime,
+    last_tick: Instant,
     phase: f32,
     smoothed_amplitude: f32,
+    bass_envelope: f32,
+    fade: f32,
+    fade_target: f32,
     tx: Sender<RenderRequest>,
     rx: Receiver<RenderResult>,
-    last_frame: Option<RenderResult>,
+    front_buffer: Option<RenderResult>,
+    back_buffer: Option<RenderResult>,
     start_palette: [Vector3; 6],
     target_palette: [Vector3; 6],
     transition_progress: f32,
     last_track_id: Option<String>,
+
+    waves: Vec<LandingWave>,
+    selections: Vec<Option<usize>>,
+    show_settings: bool,
+    loading: bool,
+    focused_index: usize,
+    dropdown_open: bool,
+    dropdown_selection_index: usize,
+    dropdown_state: ListState,
+    wave_rx: Receiver<Vec<LandingWave>>,
+    wave_tx: Sender<Vec<LandingWave>>,
+    pending_request: bool,
 }
 
 impl Default for MyVibe {
     fn default() -> Self {
-        let (tx, rx_req) = flume::bounded::<RenderRequest>(1);
+        let (tx, rx_req) = flume::unbounded::<RenderRequest>();
         let (tx_res, rx) = flume::unbounded::<RenderResult>();
+        let (wave_tx, wave_rx) = flume::unbounded();
 
-        thread::spawn(move || {
-            while let Ok(req) = rx_req.recv() {
-                let result = render_frame(req);
-                if tx_res.send(result).is_err() {
-                    break;
+        thread::Builder::new()
+            .name("wave-renderer".to_string())
+            .spawn(move || {
+                while let Ok(req) = rx_req.recv() {
+                    let result = render_frame(req);
+                    if tx_res.send(result).is_err() {
+                        break;
+                    }
                 }
-            }
-        });
+            })
+            .expect("Failed to spawn renderer thread");
 
         Self {
-            last_tick: SystemTime::now(),
+            last_tick: Instant::now(),
             phase: 0.0,
             smoothed_amplitude: 0.0,
+            bass_envelope: 0.0,
+            fade: 0.0,
+            fade_target: 0.0,
             tx,
             rx,
-            last_frame: None,
+            front_buffer: None,
+            back_buffer: None,
             start_palette: DEFAULT_PALETTE,
             target_palette: DEFAULT_PALETTE,
             transition_progress: 1.0,
             last_track_id: None,
+
+            waves: Vec::new(),
+            selections: Vec::new(),
+            show_settings: false,
+            loading: false,
+            focused_index: 0,
+            dropdown_open: false,
+            dropdown_selection_index: 0,
+            dropdown_state: ListState::default(),
+            wave_rx,
+            wave_tx,
+            pending_request: false,
         }
     }
 }
@@ -300,11 +342,28 @@ impl Default for MyVibe {
 #[async_trait]
 impl View for MyVibe {
     fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, ctx: &AppContext) {
-        let now = SystemTime::now();
-        let dt = now
-            .duration_since(self.last_tick)
-            .unwrap_or_default()
-            .as_secs_f32();
+        if self.fade_target == 0.0 && self.fade == 0.0 && !self.show_settings {
+            self.fade_target = 1.0;
+        }
+        if let Ok(waves) = self.wave_rx.try_recv() {
+            self.waves = waves;
+            self.selections = vec![None; self.waves.len()];
+            self.loading = false;
+        }
+
+        if self.waves.is_empty() && !self.loading {
+            self.loading = true;
+            let api = ctx.api.clone();
+            let tx = self.wave_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(waves) = api.fetch_waves().await {
+                    let _ = tx.send(waves);
+                }
+            });
+        }
+
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f32();
         self.last_tick = now;
 
         let amplitude = ctx.audio_system.current_amplitude();
@@ -315,6 +374,13 @@ impl View for MyVibe {
         } else {
             self.smoothed_amplitude = self.smoothed_amplitude * 0.95 + target_amp * 0.05;
         }
+
+        if target_amp > self.bass_envelope {
+            self.bass_envelope = self.bass_envelope * 0.3 + target_amp * 0.7;
+        } else {
+            self.bass_envelope = self.bass_envelope * 0.92 + target_amp * 0.08;
+        }
+
         let speed = 0.8 + self.smoothed_amplitude * 2.0;
         self.phase += dt * speed;
 
@@ -362,8 +428,10 @@ impl View for MyVibe {
         let width = inner_area.width as usize;
         let height = inner_area.height as usize;
 
-        while let Ok(res) = self.rx.try_recv() {
-            self.last_frame = Some(res);
+        if let Ok(res) = self.rx.try_recv() {
+            self.back_buffer = self.front_buffer.take();
+            self.front_buffer = Some(res);
+            self.pending_request = false;
         }
 
         let (bg_r, bg_g, bg_b) = match colors::BACKGROUND {
@@ -371,48 +439,326 @@ impl View for MyVibe {
             _ => (0, 0, 0),
         };
 
-        let req = RenderRequest {
-            width,
-            height,
-            time: self.phase,
-            amplitude: self.smoothed_amplitude,
-            bg_rgb: (bg_r, bg_g, bg_b),
-            palette: current_palette,
-        };
-        let _ = self.tx.try_send(req);
+        let fade_speed = 3.0;
+        let fade_delta = dt * fade_speed;
+        if self.fade < self.fade_target {
+            self.fade = (self.fade + fade_delta).min(self.fade_target);
+        } else if self.fade > self.fade_target {
+            self.fade = (self.fade - fade_delta).max(self.fade_target);
+        }
 
-        if let Some(frame) = &self.last_frame {
+        if !self.pending_request {
+            let buffer = self.back_buffer.take().map(|b| b.data).unwrap_or_default();
+            let req = RenderRequest {
+                width,
+                height,
+                time: self.phase,
+                amplitude: self.smoothed_amplitude,
+                bg_rgb: (bg_r, bg_g, bg_b),
+                palette: current_palette,
+                buffer,
+            };
+            if self.tx.send(req).is_ok() {
+                self.pending_request = true;
+            }
+        }
+
+        if let Some(frame) = &self.front_buffer {
             if frame.width == width && frame.height == height {
                 let buf = f.buffer_mut();
+                let extra_dim = if self.show_settings { 0.2 } else { 1.0 };
                 for y in 0..height {
                     for x in 0..width {
                         let idx = y * width + x;
                         if idx < frame.data.len() {
                             let ((r_top, g_top, b_top), (r_bot, g_bot, b_bot)) = frame.data[idx];
 
+                            let fade = (self.fade * extra_dim).clamp(0.0, 1.0);
+                            let r_top = lerp(bg_r as f32, r_top as f32, fade) as u8;
+                            let g_top = lerp(bg_g as f32, g_top as f32, fade) as u8;
+                            let b_top = lerp(bg_b as f32, b_top as f32, fade) as u8;
+                            let r_bot = lerp(bg_r as f32, r_bot as f32, fade) as u8;
+                            let g_bot = lerp(bg_g as f32, g_bot as f32, fade) as u8;
+                            let b_bot = lerp(bg_b as f32, b_bot as f32, fade) as u8;
+
                             if let Some(cell) = buf.cell_mut((
                                 inner_area.left() + x as u16,
                                 inner_area.top() + y as u16,
                             )) {
-                                cell.set_char('▀')
-                                    .set_fg(Color::Rgb(r_top, g_top, b_top))
-                                    .set_bg(Color::Rgb(r_bot, g_bot, b_bot));
+                                if self.show_settings {
+                                    let r_avg = ((r_top as u16 + r_bot as u16) / 2) as u8;
+                                    let g_avg = ((g_top as u16 + g_bot as u16) / 2) as u8;
+                                    let b_avg = ((b_top as u16 + b_bot as u16) / 2) as u8;
+                                    cell.set_char(' ').set_bg(Color::Rgb(r_avg, g_avg, b_avg));
+                                } else {
+                                    cell.set_char('▀')
+                                        .set_fg(Color::Rgb(r_top, g_top, b_top))
+                                        .set_bg(Color::Rgb(r_bot, g_bot, b_bot));
+                                }
                             }
                         }
                     }
                 }
             }
         }
+
+        if self.show_settings {
+            self.render_settings(f, area);
+        }
     }
 
     async fn handle_input(
         &mut self,
-        _key: KeyEvent,
+        key: KeyEvent,
         _state: &AppState,
-        _ctx: &AppContext,
+        ctx: &AppContext,
     ) -> Option<Action> {
+        if key.code == KeyCode::Char(' ') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            let mut seeds = Vec::new();
+            for (i, &sel_idx) in self.selections.iter().enumerate() {
+                if let Some(idx) = sel_idx {
+                    if let Some(item) = self.waves[i].items.get(idx) {
+                        seeds.extend(item.seeds.clone());
+                    }
+                }
+            }
+
+            let api = ctx.api.clone();
+            let tx = ctx.event_tx.clone();
+
+            tokio::spawn(async move {
+                if let Ok(session) = api.create_session(seeds).await {
+                    let session_tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+                    let _ = tx.send(Event::WaveReady(session, session_tracks));
+                }
+            });
+
+            self.show_settings = false;
+            return Some(Action::None);
+        }
+
+        if key.code == KeyCode::Char('s') && !self.dropdown_open {
+            self.show_settings = !self.show_settings;
+            if !self.show_settings {
+                self.fade_target = 1.0;
+            }
+            return Some(Action::None);
+        }
+
+        if self.show_settings {
+            match key.code {
+                KeyCode::Char('R') => {
+                    for sel in self.selections.iter_mut() {
+                        *sel = None;
+                    }
+                    self.dropdown_open = false;
+                }
+                KeyCode::Char('r') => {
+                    self.selections[self.focused_index] = None;
+                    self.dropdown_open = false;
+                }
+                _ => {}
+            }
+            if self.dropdown_open {
+                match key.code {
+                    KeyCode::Up => {
+                        if self.dropdown_selection_index > 0 {
+                            self.dropdown_selection_index -= 1;
+                            self.dropdown_state
+                                .select(Some(self.dropdown_selection_index));
+                        }
+                    }
+                    KeyCode::Down => {
+                        if let Some(wave) = self.waves.get(self.focused_index) {
+                            // +1 for none variant
+                            if self.dropdown_selection_index < wave.items.len() {
+                                self.dropdown_selection_index += 1;
+                                self.dropdown_state
+                                    .select(Some(self.dropdown_selection_index));
+                            }
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if self.dropdown_selection_index == 0 {
+                            self.selections[self.focused_index] = None;
+                        } else {
+                            self.selections[self.focused_index] =
+                                Some(self.dropdown_selection_index - 1);
+                        }
+                        self.dropdown_open = false;
+                    }
+                    KeyCode::Esc => {
+                        self.dropdown_open = false;
+                    }
+                    _ => {}
+                }
+            } else {
+                match key.code {
+                    KeyCode::Up => {
+                        if self.focused_index > 0 {
+                            self.focused_index -= 1;
+                        }
+                    }
+                    KeyCode::Down => {
+                        if self.focused_index < self.waves.len().saturating_sub(1) {
+                            self.focused_index += 1;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if self.focused_index < self.waves.len() {
+                            self.dropdown_open = true;
+                            self.dropdown_selection_index = self.selections[self.focused_index]
+                                .map(|i| i + 1)
+                                .unwrap_or(0);
+                            self.dropdown_state
+                                .select(Some(self.dropdown_selection_index));
+                        }
+                    }
+                    KeyCode::Esc => {
+                        self.show_settings = false;
+                        self.fade_target = 1.0;
+                    }
+                    _ => {}
+                }
+            }
+            return Some(Action::None);
+        }
         None
     }
+}
+
+impl MyVibe {
+    fn render_settings(&mut self, f: &mut Frame, area: Rect) {
+        let overlay_area = centered_rect(area, 60, 80);
+        f.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" My Vibe Settings "),
+            overlay_area,
+        );
+
+        if self.loading {
+            f.render_widget(
+                Paragraph::new("Loading waves...").alignment(Alignment::Center),
+                overlay_area,
+            );
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .margin(1)
+            .split(overlay_area);
+
+        let content_area = chunks[0];
+
+        let mut constraints = Vec::new();
+        for _ in 0..self.waves.len() {
+            constraints.push(Constraint::Length(3));
+        }
+        constraints.push(Constraint::Min(0));
+
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .margin(1)
+            .split(content_area);
+
+        for (i, wave) in self.waves.iter().enumerate() {
+            let is_focused = i == self.focused_index;
+            let selected_text = if let Some(idx) = self.selections[i] {
+                wave.items
+                    .get(idx)
+                    .map(|item| item.title.clone())
+                    .unwrap_or_else(|| "—".to_string())
+            } else {
+                "—".to_string()
+            };
+
+            let border_style = if is_focused {
+                Style::default().fg(colors::PRIMARY)
+            } else {
+                Style::default().fg(colors::NEUTRAL)
+            };
+
+            let paragraph = Paragraph::new(selected_text)
+                .style(Style::default().fg(Color::White))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(wave.title.clone())
+                        .border_style(border_style),
+                );
+
+            f.render_widget(paragraph, rows[i]);
+        }
+
+        if self.dropdown_open {
+            if let Some(wave) = self.waves.get(self.focused_index) {
+                let area = rows[self.focused_index];
+                let dropdown_height = (wave.items.len() + 1).min(10) as u16 + 2;
+                let dropdown_area = Rect {
+                    x: area.x,
+                    y: area.y + 1,
+                    width: area.width,
+                    height: dropdown_height,
+                };
+
+                f.render_widget(Clear, dropdown_area);
+
+                let mut items = vec![ListItem::new("—")];
+                items.extend(
+                    wave.items
+                        .iter()
+                        .map(|item| ListItem::new(item.title.clone())),
+                );
+
+                let list = List::new(items)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(colors::NEUTRAL))
+                            .style(Style::default().bg(colors::BACKGROUND)),
+                    )
+                    .highlight_style(
+                        Style::default()
+                            .bg(colors::PRIMARY)
+                            .fg(colors::BACKGROUND)
+                            .add_modifier(Modifier::BOLD),
+                    );
+
+                f.render_stateful_widget(list, dropdown_area, &mut self.dropdown_state);
+            }
+        }
+
+        let instructions = Paragraph::new(
+            "Up/Down: Navigate | Enter: Select/Open | Ctrl+Space: Start Vibe | s: Toggle Settings",
+        )
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(instructions, chunks[1]);
+    }
+}
+
+fn centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 struct RenderRequest {
@@ -422,6 +768,7 @@ struct RenderRequest {
     amplitude: f32,
     bg_rgb: (u8, u8, u8),
     palette: [Vector3; 6],
+    buffer: Vec<((u8, u8, u8), (u8, u8, u8))>,
 }
 
 struct RenderResult {
@@ -444,8 +791,8 @@ fn calculate_noise_shape(
     }
 
     let n0 = simplex_noise(
-        uv.x * 1.2 + offset,
-        uv.y * 1.2 + offset,
+        uv.x * 0.95 + offset,
+        uv.y * 0.95 + offset,
         time * 0.5 + offset,
     ) * 0.5
         + 0.5;
@@ -507,7 +854,7 @@ fn calculate_blob_layer(
         time,
     );
 
-    let alpha_falloff = smooth_step(outer_radius + 0.4, 0.22, len);
+    let alpha_falloff = smooth_step(outer_radius + 0.35, 0.22, len);
     noise_alpha = lerp(0.0, noise_alpha, alpha_falloff);
 
     if noise_alpha < 0.03 {
@@ -531,6 +878,7 @@ fn process_pixel(
     bg_rgb: (u8, u8, u8),
     time: f32,
     amplitude: f32,
+    bass_envelope: f32,
     palette: &[Vector3; 6],
 ) -> ((u8, u8, u8), (u8, u8, u8)) {
     let aspect = (width as f32) / (height as f32 * 2.0);
@@ -548,8 +896,8 @@ fn process_pixel(
     let v_top_scaled = v_top * 1.6;
     let v_bot = ((y as f32 * 2.0 + 1.0) / (height as f32 * 2.0)) * 2.0 - 1.0;
     let v_bot_scaled = v_bot * 1.6;
-    let n0_top = simplex_noise(u_scaled * 1.2, v_top_scaled * 1.2, time * 0.5) * 0.5 + 0.5;
-    let n0_bot = simplex_noise(u_scaled * 1.2, v_bot_scaled * 1.2, time * 0.5) * 0.5 + 0.5;
+    let n0_top = simplex_noise(u_scaled * 0.95, v_top_scaled * 0.95, time * 0.5) * 0.5 + 0.5;
+    let n0_bot = simplex_noise(u_scaled * 0.95, v_bot_scaled * 0.95, time * 0.5) * 0.5 + 0.5;
     for i in 0..3 {
         let fi = i as f32;
         let radius = 0.6 - 0.12 * fi;
@@ -565,7 +913,7 @@ fn process_pixel(
             width,
             spark * 0.3,
             amplitude * 0.12,
-            amplitude * 0.65,
+            bass_envelope,
             offset,
             time,
         );
@@ -580,7 +928,7 @@ fn process_pixel(
             width,
             spark * 0.3,
             amplitude * 0.12,
-            amplitude * 0.65,
+            bass_envelope,
             offset,
             time,
         );
@@ -637,42 +985,41 @@ fn render_frame(req: RenderRequest) -> RenderResult {
 
     let palette = req.palette;
 
-    let mut data = vec![((0, 0, 0), (0, 0, 0)); width * height];
+    let mut data = req.buffer;
+    if data.len() != width * height {
+        data.resize(width * height, ((0, 0, 0), (0, 0, 0)));
+    }
 
-    let num_threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    let chunk_height = (height + num_threads - 1) / num_threads;
+    let num_threads = rayon::current_num_threads();
+    let rows_per_chunk = (height / num_threads).max(1);
+    let chunk_size = width * rows_per_chunk;
 
-    std::thread::scope(|s| {
-        for (i, chunk) in data.chunks_mut(width * chunk_height).enumerate() {
-            let start_y = i * chunk_height;
-            let palette_ref = &palette;
-
-            s.spawn(move || {
-                for (local_y, row) in chunk.chunks_mut(width).enumerate() {
-                    let y = start_y + local_y;
-                    if y >= height {
-                        break;
-                    }
-
-                    for (x, pixel) in row.iter_mut().enumerate() {
-                        *pixel = process_pixel(
-                            x,
-                            y,
-                            width,
-                            height,
-                            bg_vec,
-                            (bg_r, bg_g, bg_b),
-                            time,
-                            amplitude,
-                            palette_ref,
-                        );
-                    }
+    data.par_chunks_mut(chunk_size)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk)| {
+            let start_y = chunk_idx * rows_per_chunk;
+            for (local_y, row) in chunk.chunks_mut(width).enumerate() {
+                let y = start_y + local_y;
+                if y >= height {
+                    break;
                 }
-            });
-        }
-    });
+
+                for (x, pixel) in row.iter_mut().enumerate() {
+                    *pixel = process_pixel(
+                        x,
+                        y,
+                        width,
+                        height,
+                        bg_vec,
+                        (bg_r, bg_g, bg_b),
+                        time,
+                        amplitude,
+                        amplitude,
+                        &palette,
+                    );
+                }
+            }
+        });
 
     RenderResult {
         width,

@@ -6,6 +6,9 @@ use yandex_music::{
         album::get_album::GetAlbumOptions,
         artist::get_artist_tracks::ArtistTracksOptions,
         playlist::{get_all_playlists::GetAllPlaylistsOptions, get_playlists::GetPlaylistsOptions},
+        rotor::{
+            create_session::CreateSessionOptions, get_session_tracks::GetSessionTracksOptions,
+        },
         search::get_search::SearchOptions,
         track::{
             get_file_info::GetFileInfoOptions, get_lyrics::GetLyricsOptions,
@@ -15,7 +18,9 @@ use yandex_music::{
     model::{
         album::Album,
         info::{file_info::Codec, lyrics::LyricsFormat},
+        landing::wave::LandingWave,
         playlist::Playlist,
+        rotor::session::Session,
         search::Search,
         track::{PartialTrack, Track},
     },
@@ -145,5 +150,23 @@ impl ApiService {
     pub async fn fetch_artist_tracks(&self, artist_id: String) -> color_eyre::Result<Vec<Track>> {
         let opts = ArtistTracksOptions::new(artist_id);
         Ok(self.client.get_artist_tracks(&opts).await?.tracks)
+    }
+
+    pub async fn fetch_waves(&self) -> color_eyre::Result<Vec<LandingWave>> {
+        Ok(self.client.get_waves().await?)
+    }
+
+    pub async fn create_session(&self, seeds: Vec<String>) -> color_eyre::Result<Session> {
+        let opts = CreateSessionOptions::new(seeds);
+        Ok(self.client.create_session(opts).await?)
+    }
+
+    pub async fn get_session_tracks(
+        &self,
+        session_id: String,
+        queue: Vec<String>,
+    ) -> color_eyre::Result<Session> {
+        let opts = GetSessionTracksOptions::new(session_id, queue);
+        Ok(self.client.get_session_tracks(opts).await?)
     }
 }

@@ -230,6 +230,12 @@ impl EventHandler {
                     );
                 }
             }
+            Event::WaveReady(session, tracks) => {
+                app.ctx
+                    .audio_system
+                    .load_context(PlaybackContext::Wave(session), tracks, 0)
+                    .await;
+            }
             _ => {}
         }
     }
@@ -269,6 +275,12 @@ impl EventHandler {
         match action {
             Action::Quit => app.should_quit = true,
             Action::PlayPause => app.ctx.audio_system.play_pause().await,
+            Action::PlayWave(session, tracks) => {
+                app.ctx
+                    .audio_system
+                    .load_context(PlaybackContext::Wave(session), tracks, 0)
+                    .await;
+            }
             _ => {}
         }
     }

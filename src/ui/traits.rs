@@ -4,6 +4,7 @@ use crate::ui::state::AppState;
 use async_trait::async_trait;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::{Frame, layout::Rect};
+use yandex_music::model::{rotor::session::Session, track::Track};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -26,6 +27,7 @@ pub enum Action {
     SwitchTab(usize),
     Back,
     None,
+    PlayWave(Session, Vec<Track>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

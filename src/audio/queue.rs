@@ -2,7 +2,9 @@ use super::enums::RepeatMode;
 use crate::http::ApiService;
 use rand::{rng, seq::SliceRandom};
 use std::sync::Arc;
-use yandex_music::model::{album::Album, artist::Artist, playlist::Playlist, track::Track};
+use yandex_music::model::{
+    album::Album, artist::Artist, playlist::Playlist, rotor::session::Session, track::Track,
+};
 
 pub struct QueueManager {
     pub api: Arc<ApiService>,
@@ -29,6 +31,7 @@ pub enum PlaybackContext {
     Track,
     Unknown,
     List,
+    Wave(Session),
 }
 
 impl QueueManager {
@@ -69,7 +72,8 @@ impl QueueManager {
             PlaybackContext::Playlist(_)
             | PlaybackContext::Artist(_)
             | PlaybackContext::Album(_)
-            | PlaybackContext::List => {
+            | PlaybackContext::List
+            | PlaybackContext::Wave(_) => {
                 if start_index > 0 {
                     tracks.drain(0..start_index);
                 }
@@ -136,7 +140,43 @@ impl QueueManager {
         let next_track_index = self.current_track_index + 1;
 
         if next_track_index >= self.queue.len() {
-            if let RepeatMode::All = self.repeat_mode {
+            if let PlaybackContext::Wave(ref mut session) = self.playback_context {
+                let session_id = session
+                    .radio_session_id
+                    .clone()
+                    .unwrap_or(session.batch_id.clone());
+                let queue_history: Vec<String> = self
+                    .history
+                    .iter()
+                    .rev()
+                    .take(20)
+                    .map(|t| {
+                        format!(
+                            "{}:{}",
+                            t.id,
+                            t.albums
+                                .first()
+                                .and_then(|a| a.id.as_ref().map(|id| id.to_string()))
+                                .unwrap_or_default()
+                        )
+                    })
+                    .collect();
+
+                let api = self.api.clone();
+                if let Ok(new_session) = api.get_session_tracks(session_id, queue_history).await {
+                    *session = new_session.clone();
+                    for item in new_session.sequence {
+                        self.queue.push(item.track);
+                    }
+                    if self.queue.len() > next_track_index {
+                        self.current_track_index = next_track_index;
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            } else if let RepeatMode::All = self.repeat_mode {
                 self.current_track_index = 0;
             } else {
                 return None;
