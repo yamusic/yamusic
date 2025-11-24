@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use yandex_music::model::{
-    album::Album, artist::Artist, playlist::Playlist, search::Search, track::Track,
+    album::Album, artist::Artist, playlist::Playlist, rotor::session::Session, search::Search,
+    track::Track,
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,7 @@ pub enum Event {
     LyricsFetched(Option<String>),
     SearchResults(Search),
     FetchError(String),
+    WaveReady(Session, Vec<Track>),
 
     // Commands
     Play(i32),

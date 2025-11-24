@@ -51,6 +51,8 @@ thiserror = "2.0.17"
 async-trait = "0.1.89"
 futures = "0.3"
 
+rayon = "1.10"
+
 [profile.inc]
 inherits = "release"
 opt-level = 2
