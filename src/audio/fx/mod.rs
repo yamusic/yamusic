@@ -1,6 +1,6 @@
 use rodio::Source;
 
-use std::time::Duration;
+use std::{num::NonZero, time::Duration};
 
 pub mod analyzer;
 pub mod fade;
@@ -43,11 +43,11 @@ impl<T: Source<Item = f32> + Send + 'static> Source for FxSource<T> {
         self.inner.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> NonZero<u16> {
         self.inner.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> NonZero<u32> {
         self.inner.sample_rate()
     }
 

@@ -19,13 +19,18 @@ ratatui = { version = "0.29.0", features = ["unstable-widget-ref"] }
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 
 # Audio
-rodio = { version = "0.21.1", default-features = false, features = [
+rodio = { git = "https://github.com/rustaudio/rodio", rev = "1b3459a93c59b8bb1a0351ac4b560e54c5c917b5", default-features = false, features = [
   "playback",
-  "symphonia-all",
+  "symphonia-flac",
+  "symphonia-aac",
+  "symphonia-mp3",
+  "symphonia-isomp4",
+  "symphonia-simd",
   "tracing",
 ] }
 
-yandex-music = "0.4.3"
+
+yandex-music = "0.4.4"
 
 # Utilities
 unicode-width = "0.1"
@@ -54,6 +59,7 @@ lto = false
 incremental = true
 
 [profile.release]
-# lto = true
-# codegen-units = 1
 opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

@@ -1,3 +1,5 @@
+use std::num::NonZero;
+
 use rodio::{
     Device, DeviceTrait, OutputStream, OutputStreamBuilder, Sink,
     cpal::{BufferSize, SampleFormat, SampleRate, StreamConfig, default_host, traits::HostTrait},
@@ -31,7 +33,7 @@ pub fn construct_sink(
 ) -> color_eyre::Result<(OutputStream, Sink)> {
     let stream = OutputStreamBuilder::default()
         .with_buffer_size(config.buffer_size)
-        .with_sample_rate(config.sample_rate.0)
+        .with_sample_rate(NonZero::new(config.sample_rate.0).unwrap())
         .with_device(device)
         .with_sample_format(sample_format)
         .open_stream_or_fallback()?;
