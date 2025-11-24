@@ -115,7 +115,7 @@ impl ApiService {
         &self,
         track_id: String,
     ) -> color_eyre::Result<(String, String, u32)> {
-        let opts = GetFileInfoOptions::new(track_id).codec(Codec::FlacMp4);
+        let opts = GetFileInfoOptions::new(track_id).codecs(vec![Codec::FlacMp4]);
         let info = self.client.get_file_info(&opts).await?;
 
         Ok((info.url, info.codec, info.bitrate))

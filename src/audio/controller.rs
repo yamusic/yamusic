@@ -126,8 +126,8 @@ impl AudioController {
                             fade.in_stop,
                             fade.out_start,
                             fade.out_stop,
-                            source.sample_rate(),
-                            source.channels(),
+                            source.sample_rate().get(),
+                            source.channels().get(),
                         ));
                     }
 

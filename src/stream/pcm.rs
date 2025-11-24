@@ -6,6 +6,7 @@ use crossbeam_channel::{
 use flume::{Receiver, Sender};
 use rodio::{Decoder, Source};
 use std::collections::VecDeque;
+use std::num::NonZero;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -137,12 +138,12 @@ impl Source for BufferedStreamingSource {
         None
     }
 
-    fn channels(&self) -> u16 {
-        self.channels
+    fn channels(&self) -> NonZero<u16> {
+        NonZero::new(self.channels).unwrap()
     }
 
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate
+    fn sample_rate(&self) -> NonZero<u32> {
+        NonZero::new(self.sample_rate).unwrap()
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -216,8 +217,8 @@ pub fn create_streaming_session(
     let source = BufferedStreamingSource::new(
         sample_rx,
         generation,
-        sample_rate,
-        channels,
+        sample_rate.get(),
+        channels.get(),
         total_duration,
         controller.clone(),
     );
