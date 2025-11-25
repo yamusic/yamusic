@@ -3,6 +3,7 @@ pub mod artist_detail;
 pub mod liked_tracks;
 pub mod lyrics;
 pub mod my_vibe;
+pub mod my_vibe_gpu;
 pub mod playlist_detail;
 pub mod playlists;
 pub mod search;

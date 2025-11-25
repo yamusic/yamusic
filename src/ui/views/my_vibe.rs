@@ -63,21 +63,22 @@ lazy_static! {
     };
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Vector3 {
-    x: f32,
-    y: f32,
-    z: f32,
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct Vector3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
 impl Vector3 {
     #[inline(always)]
-    fn new(x: f32, y: f32, z: f32) -> Self {
+    pub fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
     #[inline(always)]
-    fn lerp(self, other: Self, t: f32) -> Self {
+    pub fn lerp(self, other: Self, t: f32) -> Self {
         Self {
             x: self.x + (other.x - self.x) * t,
             y: self.y + (other.y - self.y) * t,
@@ -299,8 +300,14 @@ impl Default for MyVibe {
         thread::Builder::new()
             .name("wave-renderer".to_string())
             .spawn(move || {
+                let mut gpu_renderer = crate::ui::views::my_vibe_gpu::GpuRenderer::new_blocking();
+
                 while let Ok(req) = rx_req.recv() {
-                    let result = render_frame(req);
+                    let result = if let Some(renderer) = &mut gpu_renderer {
+                        renderer.render(req)
+                    } else {
+                        render_frame(req)
+                    };
                     if tx_res.send(result).is_err() {
                         break;
                     }
@@ -313,6 +320,7 @@ impl Default for MyVibe {
             phase: 0.0,
             smoothed_amplitude: 0.0,
             bass_envelope: 0.0,
+
             fade: 0.0,
             fade_target: 0.0,
             tx,
@@ -466,6 +474,7 @@ impl View for MyVibe {
         if let Some(frame) = &self.front_buffer {
             if frame.width == width && frame.height == height {
                 let buf = f.buffer_mut();
+
                 let extra_dim = if self.show_settings { 0.2 } else { 1.0 };
                 for y in 0..height {
                     for x in 0..width {
@@ -570,7 +579,7 @@ impl View for MyVibe {
                     }
                     KeyCode::Down => {
                         if let Some(wave) = self.waves.get(self.focused_index) {
-                            // +1 for none variant
+                            // +1 for empty selection
                             if self.dropdown_selection_index < wave.items.len() {
                                 self.dropdown_selection_index += 1;
                                 self.dropdown_state
@@ -671,15 +680,15 @@ impl MyVibe {
                 wave.items
                     .get(idx)
                     .map(|item| item.title.clone())
-                    .unwrap_or_else(|| "—".to_string())
+                    .unwrap_or_else(|| "None".to_string())
             } else {
-                "—".to_string()
+                "None".to_string()
             };
 
             let border_style = if is_focused {
-                Style::default().fg(colors::PRIMARY)
+                Style::default().fg(Color::Yellow)
             } else {
-                Style::default().fg(colors::NEUTRAL)
+                Style::default().fg(Color::Gray)
             };
 
             let paragraph = Paragraph::new(selected_text)
@@ -697,6 +706,7 @@ impl MyVibe {
         if self.dropdown_open {
             if let Some(wave) = self.waves.get(self.focused_index) {
                 let area = rows[self.focused_index];
+
                 let dropdown_height = (wave.items.len() + 1).min(10) as u16 + 2;
                 let dropdown_area = Rect {
                     x: area.x,
@@ -707,7 +717,7 @@ impl MyVibe {
 
                 f.render_widget(Clear, dropdown_area);
 
-                let mut items = vec![ListItem::new("—")];
+                let mut items = vec![ListItem::new("None")];
                 items.extend(
                     wave.items
                         .iter()
@@ -718,13 +728,12 @@ impl MyVibe {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .border_style(Style::default().fg(colors::NEUTRAL))
-                            .style(Style::default().bg(colors::BACKGROUND)),
+                            .style(Style::default().bg(Color::Black)),
                     )
                     .highlight_style(
                         Style::default()
-                            .bg(colors::PRIMARY)
-                            .fg(colors::BACKGROUND)
+                            .bg(Color::Blue)
+                            .fg(Color::White)
                             .add_modifier(Modifier::BOLD),
                     );
 
@@ -761,58 +770,65 @@ fn centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-struct RenderRequest {
-    width: usize,
-    height: usize,
-    time: f32,
-    amplitude: f32,
-    bg_rgb: (u8, u8, u8),
-    palette: [Vector3; 6],
-    buffer: Vec<((u8, u8, u8), (u8, u8, u8))>,
+pub struct RenderRequest {
+    pub width: usize,
+    pub height: usize,
+    pub time: f32,
+    pub amplitude: f32,
+    pub bg_rgb: (u8, u8, u8),
+    pub palette: [Vector3; 6],
+    pub buffer: Vec<((u8, u8, u8), (u8, u8, u8))>,
 }
 
-struct RenderResult {
-    width: usize,
-    height: usize,
-    data: Vec<((u8, u8, u8), (u8, u8, u8))>,
+pub struct RenderResult {
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<((u8, u8, u8), (u8, u8, u8))>,
+}
+
+struct LayerConstants {
+    intensity: f32,
+    edge_offset: f32,
+    scale: f32,
+    outer_radius_bias: f32,
+    highlight_factor: f32,
+    offset: f32,
+    color1: Vector3,
+    color2: Vector3,
 }
 
 fn calculate_noise_shape(
     uv: Vector3,
-    color1: Vector3,
-    color2: Vector3,
-    strength: f32,
-    offset: f32,
+    len: f32,
+    constants: &LayerConstants,
     time: f32,
 ) -> (Vector3, f32) {
-    let len = (uv.x * uv.x + uv.y * uv.y).sqrt();
-    if len > 1.5 {
+    let len_scaled = len * constants.scale;
+    if len_scaled > 1.5 {
         return (Vector3::new(0.0, 0.0, 0.0), 0.0);
     }
 
     let n0 = simplex_noise(
-        uv.x * 0.95 + offset,
-        uv.y * 0.95 + offset,
-        time * 0.5 + offset,
+        uv.x * constants.scale * 0.95 + constants.offset,
+        uv.y * constants.scale * 0.95 + constants.offset,
+        time * 0.5 + constants.offset,
     ) * 0.5
         + 0.5;
     let r0 = n0;
 
-    let d0 = (len - r0).abs();
+    let d0 = (len_scaled - r0).abs();
 
-    let edge0 = r0 + 0.05 + (time.sin() * 0.2 + 0.25);
-    let v0 = smooth_step(edge0, r0, len);
+    let edge0 = r0 + constants.edge_offset;
+    let v0 = smooth_step(edge0, r0, len_scaled);
 
-    let intensity =
-        0.05 * (1.0 + 0.35 * (-(time * 1.5 + offset * 0.35).sin() * 0.5)) + 0.08 * strength;
-    let v1 = intensity / (1.0 + d0 + d0 * 70.0);
+    let v1 = constants.intensity / (1.0 + d0 + d0 * 70.0);
 
     if v0 < 0.05 && v1 < 0.02 {
         return (Vector3::new(0.0, 0.0, 0.0), 0.0);
     }
 
-    let mix_factor = (uv.y * 2.0).clamp(0.0, 1.0);
-    let mut col = color1.lerp(color2, mix_factor);
+    let mix_factor = (uv.y * constants.scale * 2.0).clamp(0.0, 1.0);
+    let mut col = constants.color1.lerp(constants.color2, mix_factor);
 
     col.x = (col.x + v1).clamp(0.0, 1.0);
     col.y = (col.y + v1).clamp(0.0, 1.0);
@@ -823,36 +839,18 @@ fn calculate_noise_shape(
 
 fn calculate_blob_layer(
     uv: Vector3,
+    len: f32,
     blob_radius_param: f32,
-    color1: Vector3,
-    color2: Vector3,
-    width: f32,
-    base_reaction: f32,
-    like_reaction: f32,
-    audio_strength: f32,
-    offset: f32,
+    constants: &LayerConstants,
     time: f32,
 ) -> (Vector3, f32) {
-    let len = (uv.x * uv.x + uv.y * uv.y).sqrt();
-    let subtle_reaction = (like_reaction * 0.3 + audio_strength * 1.2).min(0.95);
-    let outer_radius =
-        blob_radius_param + width * 0.5 + base_reaction * (1.0 + subtle_reaction * 1.5);
+    let outer_radius = blob_radius_param + constants.outer_radius_bias;
 
     if len > outer_radius + 0.6 {
         return (Vector3::new(0.0, 0.0, 0.0), 0.0);
     }
 
-    let strength = (like_reaction * 0.7 + audio_strength * 0.45).min(0.65);
-
-    let scale = 1.0 - like_reaction * 0.5;
-    let (mut noise_col, mut noise_alpha) = calculate_noise_shape(
-        Vector3::new(uv.x * scale, uv.y * scale, 0.0),
-        color1,
-        color2,
-        strength,
-        offset,
-        time,
-    );
+    let (mut noise_col, mut noise_alpha) = calculate_noise_shape(uv, len, constants, time);
 
     let alpha_falloff = smooth_step(outer_radius + 0.35, 0.22, len);
     noise_alpha = lerp(0.0, noise_alpha, alpha_falloff);
@@ -861,7 +859,7 @@ fn calculate_blob_layer(
         return (Vector3::new(0.0, 0.0, 0.0), 0.0);
     }
 
-    let highlight = 0.6 * like_reaction * (1.0 - smooth_step(0.2, outer_radius * 0.8, len));
+    let highlight = constants.highlight_factor * (1.0 - smooth_step(0.2, outer_radius * 0.8, len));
     noise_col.x += highlight;
     noise_col.y += highlight;
     noise_col.z += highlight;
@@ -877,9 +875,7 @@ fn process_pixel(
     bg_color: Vector3,
     bg_rgb: (u8, u8, u8),
     time: f32,
-    amplitude: f32,
-    bass_envelope: f32,
-    palette: &[Vector3; 6],
+    layer_constants: &[LayerConstants; 3],
 ) -> ((u8, u8, u8), (u8, u8, u8)) {
     let aspect = (width as f32) / (height as f32 * 2.0);
     let u = (x as f32 / width as f32) * 2.0 - 1.0;
@@ -892,44 +888,39 @@ fn process_pixel(
     let mut bot_color = bg_color;
     let mut top_alpha_acc = 0.0;
     let mut bot_alpha_acc = 0.0;
+
     let v_top = ((y as f32 * 2.0) / (height as f32 * 2.0)) * 2.0 - 1.0;
     let v_top_scaled = v_top * 1.6;
     let v_bot = ((y as f32 * 2.0 + 1.0) / (height as f32 * 2.0)) * 2.0 - 1.0;
     let v_bot_scaled = v_bot * 1.6;
-    let n0_top = simplex_noise(u_scaled * 0.95, v_top_scaled * 0.95, time * 0.5) * 0.5 + 0.5;
-    let n0_bot = simplex_noise(u_scaled * 0.95, v_bot_scaled * 0.95, time * 0.5) * 0.5 + 0.5;
+
+    let v_center = ((y as f32 * 2.0 + 0.5) / (height as f32 * 2.0)) * 2.0 - 1.0;
+    let v_center_scaled = v_center * 1.6;
+    let n0 = simplex_noise(u_scaled * 0.95, v_center_scaled * 0.95, time * 0.5) * 0.5 + 0.5;
+
+    let len_top = (u_scaled * u_scaled + v_top_scaled * v_top_scaled).sqrt();
+    let len_bot = (u_scaled * u_scaled + v_bot_scaled * v_bot_scaled).sqrt();
+
     for i in 0..3 {
-        let fi = i as f32;
-        let radius = 0.6 - 0.12 * fi;
-        let width = 0.5 - 0.15 * fi;
-        let spark = 1.0 - 0.2 * fi;
-        let offset = 0.0 + 1.57 * fi;
-        let blob_param_top = lerp(radius, radius + 0.15, n0_top);
+        let constants = &layer_constants[i];
+        let radius = 0.6 - 0.12 * (i as f32);
+        let blob_param = lerp(radius, radius + 0.15, n0);
+
         let (col, alpha) = calculate_blob_layer(
             Vector3::new(u_scaled, v_top_scaled, 0.0),
-            blob_param_top,
-            palette[i],
-            palette[i + 3],
-            width,
-            spark * 0.3,
-            amplitude * 0.12,
-            bass_envelope,
-            offset,
+            len_top,
+            blob_param,
+            constants,
             time,
         );
         top_color = top_color.lerp(col, alpha);
         top_alpha_acc += alpha;
-        let blob_param_bot = lerp(radius, radius + 0.15, n0_bot);
+
         let (col, alpha) = calculate_blob_layer(
             Vector3::new(u_scaled, v_bot_scaled, 0.0),
-            blob_param_bot,
-            palette[i],
-            palette[i + 3],
-            width,
-            spark * 0.3,
-            amplitude * 0.12,
-            bass_envelope,
-            offset,
+            len_bot,
+            blob_param,
+            constants,
             time,
         );
         bot_color = bot_color.lerp(col, alpha);
@@ -990,6 +981,45 @@ fn render_frame(req: RenderRequest) -> RenderResult {
         data.resize(width * height, ((0, 0, 0), (0, 0, 0)));
     }
 
+    let create_layer_constant = |i: usize| {
+        let fi = i as f32;
+        let width_param = 0.5 - 0.15 * fi;
+        let spark = 1.0 - 0.2 * fi;
+        let offset = 0.0 + 1.57 * fi;
+
+        let base_reaction = spark * 0.3;
+        let like_reaction = amplitude * 0.12;
+        let audio_strength = amplitude;
+
+        let subtle_reaction = (like_reaction * 0.3 + audio_strength * 1.2).min(0.95);
+        let outer_radius_bias = width_param * 0.5 + base_reaction * (1.0 + subtle_reaction * 1.5);
+
+        let strength = (like_reaction * 0.7 + audio_strength * 0.45).min(0.65);
+        let scale = 1.0 - like_reaction * 0.5;
+
+        let intensity =
+            0.05 * (1.0 + 0.35 * (-(time * 1.5 + offset * 0.35).sin() * 0.5)) + 0.08 * strength;
+        let edge_offset = 0.05 + (time.sin() * 0.2 + 0.25);
+        let highlight_factor = 0.6 * like_reaction;
+
+        LayerConstants {
+            intensity,
+            edge_offset,
+            scale,
+            outer_radius_bias,
+            highlight_factor,
+            offset,
+            color1: palette[i],
+            color2: palette[i + 3],
+        }
+    };
+
+    let layer_constants = [
+        create_layer_constant(0),
+        create_layer_constant(1),
+        create_layer_constant(2),
+    ];
+
     let num_threads = rayon::current_num_threads();
     let rows_per_chunk = (height / num_threads).max(1);
     let chunk_size = width * rows_per_chunk;
@@ -1013,9 +1043,7 @@ fn render_frame(req: RenderRequest) -> RenderResult {
                         bg_vec,
                         (bg_r, bg_g, bg_b),
                         time,
-                        amplitude,
-                        amplitude,
-                        &palette,
+                        &layer_constants,
                     );
                 }
             }

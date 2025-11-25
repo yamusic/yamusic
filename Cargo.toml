@@ -52,6 +52,9 @@ async-trait = "0.1.89"
 futures = "0.3"
 
 rayon = "1.10"
+wgpu = "0.20"
+bytemuck = { version = "1.16", features = ["derive"] }
+pollster = "0.3"
 
 [profile.inc]
 inherits = "release"
