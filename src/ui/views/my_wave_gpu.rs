@@ -1,4 +1,4 @@
-use crate::ui::views::my_vibe::{RenderRequest, RenderResult};
+use crate::ui::views::my_wave::{RenderRequest, RenderResult};
 use pollster::block_on;
 use std::borrow::Cow;
 
@@ -47,7 +47,7 @@ impl GpuRenderer {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: Some("MyVibe Device"),
+                    label: Some("MyWave Device"),
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                 },
@@ -57,12 +57,12 @@ impl GpuRenderer {
             .ok()?;
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("MyVibe Shader"),
+            label: Some("MyWave Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SHADER_SOURCE)),
         });
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("MyVibe Bind Group Layout"),
+            label: Some("MyWave Bind Group Layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -88,13 +88,13 @@ impl GpuRenderer {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("MyVibe Pipeline Layout"),
+            label: Some("MyWave Pipeline Layout"),
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("MyVibe Pipeline"),
+            label: Some("MyWave Pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "main",

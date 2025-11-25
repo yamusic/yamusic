@@ -20,7 +20,7 @@ pub struct UiState {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum Route {
     #[default]
-    MyVibe,
+    MyWave,
     TrackList,
     Playlists,
     Search,

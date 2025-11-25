@@ -17,7 +17,7 @@ use crate::{
         tui::{self, TerminalEvent},
         util::handler::EventHandler,
         views::{
-            AlbumDetail, ArtistDetail, LikedTracks, Lyrics, MyVibe, PlaylistDetail, Playlists,
+            AlbumDetail, ArtistDetail, LikedTracks, Lyrics, MyWave, PlaylistDetail, Playlists,
             Search, TrackDetail, TrackList,
         },
     },
@@ -48,7 +48,7 @@ impl App {
 
         let mut state = AppState::default();
         state.ui.sidebar_index = 1;
-        let router = Router::new(Box::new(crate::ui::views::MyVibe::default()));
+        let router = Router::new(Box::new(crate::ui::views::MyWave::default()));
         let task_manager = TaskManager::new();
 
         Ok(Self {
@@ -112,7 +112,7 @@ impl App {
         self.router.stack.clear();
         match self.state.ui.sidebar_index {
             0 => self.router.push(Box::new(Search::default())),
-            1 => self.router.push(Box::new(MyVibe::default())),
+            1 => self.router.push(Box::new(MyWave::default())),
             2 => self.router.push(Box::new(LikedTracks::default())),
             3 => self.router.push(Box::new(Playlists::default())),
             _ => {}
@@ -129,7 +129,7 @@ impl App {
                 self.state.ui.sidebar_index = 0;
                 self.update_sidebar_view().await;
             }
-            ViewRoute::MyVibe => {
+            ViewRoute::MyWave => {
                 self.state.ui.sidebar_index = 1;
                 self.update_sidebar_view().await;
             }
