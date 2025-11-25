@@ -262,7 +262,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-pub struct MyVibe {
+pub struct MyWave {
     last_tick: Instant,
     phase: f32,
     smoothed_amplitude: f32,
@@ -291,7 +291,7 @@ pub struct MyVibe {
     pending_request: bool,
 }
 
-impl Default for MyVibe {
+impl Default for MyWave {
     fn default() -> Self {
         let (tx, rx_req) = flume::unbounded::<RenderRequest>();
         let (tx_res, rx) = flume::unbounded::<RenderResult>();
@@ -300,7 +300,7 @@ impl Default for MyVibe {
         thread::Builder::new()
             .name("wave-renderer".to_string())
             .spawn(move || {
-                let mut gpu_renderer = crate::ui::views::my_vibe_gpu::GpuRenderer::new_blocking();
+                let mut gpu_renderer = crate::ui::views::my_wave_gpu::GpuRenderer::new_blocking();
 
                 while let Ok(req) = rx_req.recv() {
                     let result = if let Some(renderer) = &mut gpu_renderer {
@@ -348,7 +348,7 @@ impl Default for MyVibe {
 }
 
 #[async_trait]
-impl View for MyVibe {
+impl View for MyWave {
     fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, ctx: &AppContext) {
         if self.fade_target == 0.0 && self.fade == 0.0 && !self.show_settings {
             self.fade_target = 1.0;
@@ -636,13 +636,13 @@ impl View for MyVibe {
     }
 }
 
-impl MyVibe {
+impl MyWave {
     fn render_settings(&mut self, f: &mut Frame, area: Rect) {
         let overlay_area = centered_rect(area, 60, 80);
         f.render_widget(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" My Vibe Settings "),
+                .title(" My Wave Settings "),
             overlay_area,
         );
 
@@ -742,7 +742,7 @@ impl MyVibe {
         }
 
         let instructions = Paragraph::new(
-            "Up/Down: Navigate | Enter: Select/Open | Ctrl+Space: Start Vibe | s: Toggle Settings",
+            "Up/Down: Navigate | Enter: Select/Open | Ctrl+Space: Start Wave | s: Toggle Settings",
         )
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));

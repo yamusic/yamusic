@@ -45,7 +45,7 @@ pub enum AppMessage {
 
 #[derive(Debug, Clone)]
 pub enum ViewRoute {
-    MyVibe,
+    MyWave,
     TrackList,
     LikedTracks,
     Playlists,
