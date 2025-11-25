@@ -23,6 +23,7 @@ pub struct GpuRenderer {
     params_buf: wgpu::Buffer,
     field_buf: wgpu::Buffer,
     readback_buf: wgpu::Buffer,
+    bind_group: Option<wgpu::BindGroup>,
     capacity: usize,
 }
 
@@ -131,6 +132,7 @@ impl GpuRenderer {
             params_buf,
             field_buf,
             readback_buf,
+            bind_group: None,
             capacity: capacity as usize,
         })
     }
@@ -158,6 +160,7 @@ impl GpuRenderer {
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.bind_group = None;
         }
 
         let mut palette = [[0.0; 4]; 6];
@@ -203,20 +206,23 @@ impl GpuRenderer {
         self.queue
             .write_buffer(&self.params_buf, 0, bytemuck::cast_slice(&[params]));
 
-        let bindings = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bind Group"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.field_buf.as_entire_binding(),
-                },
-            ],
-        });
+        if self.bind_group.is_none() {
+            self.bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bind Group"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.params_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.field_buf.as_entire_binding(),
+                    },
+                ],
+            }));
+        }
+        let bindings = self.bind_group.as_ref().unwrap();
 
         let mut encoder = self
             .device
@@ -230,7 +236,7 @@ impl GpuRenderer {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &bindings, &[]);
+            pass.set_bind_group(0, bindings, &[]);
             let block = 16;
             let gx = (w as u32 + block - 1) / block;
             let gy = (h as u32 + block - 1) / block;
@@ -433,9 +439,8 @@ fn falloff(intensity: f32, atten: f32, dist: f32) -> f32 {
     return intensity / (1.0 + dist + dist * atten);
 }
 
-fn shape_noise_lobe(uv: vec2<f32>, c1: vec3<f32>, c2: vec3<f32>, strength: f32, ofs: f32) -> vec4<f32> {
+fn shape_noise_lobe(uv: vec2<f32>, n_val: f32, c1: vec3<f32>, c2: vec3<f32>, strength: f32, ofs: f32) -> vec4<f32> {
     let len_uv = length(uv);
-    let n_val = simplex3(vec3<f32>(uv * 1.2 + ofs, p.phase * 0.5 + ofs)) * 0.5 + 0.5;
     let r0 = n_val;
     let radial = distance(uv, (r0 / len_uv) * uv);
 
@@ -454,6 +459,7 @@ fn shape_noise_lobe(uv: vec2<f32>, c1: vec3<f32>, c2: vec3<f32>, strength: f32, 
 
 fn compose_ring(
     uv: vec2<f32>,
+    n_val: f32,
     base_r: f32,
     c1: vec3<f32>,
     c2: vec3<f32>,
@@ -469,7 +475,11 @@ fn compose_ring(
     let outer = base_r + width * 0.5 + spark * (1.0 + gain * 50.0 * spark);
     let strength = max(like_val, audio_val);
 
-    var blob = shape_noise_lobe(uv * (1.0 - like_val * 0.5) + noise_pos, c1, c2, strength, phase_ofs);
+    var blob = shape_noise_lobe(
+        uv * (1.0 - like_val * 0.5) + noise_pos,
+        n_val,
+        c1, c2, strength, phase_ofs
+    );
 
     let alpha_scale = smoothstep(outer, 0.5, len_uv);
     blob.w = blob.w * alpha_scale;
@@ -479,26 +489,21 @@ fn compose_ring(
     return vec4<f32>(boosted, blob.w);
 }
 
-fn shade_cell(ix: u32, iy: u32, lower_half: bool) -> vec3<f32> {
+fn get_uv(ix: u32, iy: u32, y_offset: f32) -> vec2<f32> {
     let w = p.viewport.x;
     let h = p.viewport.y;
-
-    var y_norm: f32;
-    if (lower_half) {
-        y_norm = (f32(iy) * 2.0 + 1.0) / (h * 2.0);
-    } else {
-        y_norm = (f32(iy) * 2.0) / (h * 2.0);
-    }
+    let y_norm = (f32(iy) * 2.0 + y_offset) / (h * 2.0);
     let x_norm = f32(ix) / w;
-
     var uv = vec2<f32>(x_norm, y_norm) * 2.0 - 1.0;
-
     let min_dim = min(w, h * 2.0);
     let sx = w / min_dim / p.zoom;
     let sy = (h * 2.0) / min_dim / p.zoom;
     uv.x = uv.x * sx;
     uv.y = -uv.y * sy;
+    return uv;
+}
 
+fn calculate_spark(uv: vec2<f32>) -> f32 {
     let ruv = uv * 2.0;
     let pa = atan2(ruv.y, ruv.x);
     let idx = (pa / 3.1415) * 0.5;
@@ -512,11 +517,38 @@ fn shade_cell(ix: u32, iy: u32, lower_half: bool) -> vec3<f32> {
     let spark2 = tri_field3d(vec3<f32>(idx1, 0.0, idx1), 0.1);
     let mix_amount = smoothstep(0.9, 1.0, sin(idx21));
     spark = spark * (1.0 - mix_amount) + spark2 * mix_amount;
-    spark = spark * 0.2 + pow(spark, 10.0);
-    spark = smoothstep(0.0, spark, 0.3) * spark;
+    
+    let s2 = spark * spark;
+    let s4 = s2 * s2;
+    let s8 = s4 * s4;
+    let s10 = s8 * s2;
+    spark = spark * 0.2 + s10;
+
+    return smoothstep(0.0, spark, 0.3) * spark;
+}
+
+fn calculate_band_noise(uv: vec2<f32>) -> vec3<f32> {
+    var noise_vals = vec3<f32>(0.0);
+    for (var i: i32 = 0; i < 3; i++) {
+        let idx_f = f32(i);
+        let rot = p.orbits[i];
+        let off = BASE_OFFSET + STEP_OFFSET * idx_f;
+        let noise_pos = spin2d(rot.xy, p.phase * rot.z);
+        let react_val = p.response[i];
+        
+        let transformed_uv = uv * (1.0 - react_val * 0.5) + noise_pos;
+        
+        let n_val = simplex3(vec3<f32>(transformed_uv * 1.2 + off, p.phase * 0.5 + off)) * 0.5 + 0.5;
+        noise_vals[i] = n_val;
+    }
+    return noise_vals;
+}
+
+fn shade_cell(ix: u32, iy: u32, lower_half: bool, spark: f32, n0: f32, band_noise: vec3<f32>) -> vec3<f32> {
+    let y_offset = select(0.0, 1.0, lower_half);
+    let uv = get_uv(ix, iy, y_offset);
 
     var color = p.backdrop.xyz;
-    let n0 = simplex3(vec3<f32>(uv * 1.2, p.phase * 0.5));
 
     for (var i: i32 = 0; i < 3; i++) {
         let idx_f = f32(i);
@@ -526,18 +558,8 @@ fn shade_cell(ix: u32, iy: u32, lower_half: bool) -> vec3<f32> {
         let col2 = p.bands[i + 3].xyz;
         let rot = p.orbits[i];
 
-        var band_val: f32;
-        var react_val: f32;
-        if (i == 0) {
-            band_val = p.spectrum.x;
-            react_val = p.response.x;
-        } else if (i == 1) {
-            band_val = p.spectrum.y;
-            react_val = p.response.y;
-        } else {
-            band_val = p.spectrum.z;
-            react_val = p.response.z;
-        }
+        let band_val = p.spectrum[i];
+        let react_val = p.response[i];
 
         let mixed_r = radius + (radius + 0.3 - radius) * n0;
         let w_ring = BASE_WIDTH - STEP_WIDTH * idx_f;
@@ -547,6 +569,7 @@ fn shade_cell(ix: u32, iy: u32, lower_half: bool) -> vec3<f32> {
 
         let blob = compose_ring(
             uv,
+            band_noise[i],
             mixed_r,
             col1,
             col2,
@@ -580,8 +603,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let top_color = shade_cell(x, y, false);
-    let bot_color = shade_cell(x, y, true);
+    let uv_center = get_uv(x, y, 0.5);
+    let spark = calculate_spark(uv_center);
+    let n0 = simplex3(vec3<f32>(uv_center * 1.2, p.phase * 0.5));
+    let band_noise = calculate_band_noise(uv_center);
+
+    let top_color = shade_cell(x, y, false, spark, n0, band_noise);
+    let bot_color = shade_cell(x, y, true, spark, n0, band_noise);
 
     let idx = y * u32(p.viewport.x) + x;
     out_cells[idx * 2] = pack_rgb(top_color);
