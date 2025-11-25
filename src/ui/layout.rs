@@ -59,7 +59,7 @@ impl<'a> AppLayout<'a> {
 
         f.render_widget(sidebar_block, sidebar_area);
         f.render_widget(content_block, content_area);
-        let sidebar_items = vec!["  Search", "  My Wave", "  My Favorites", "  Playlists"];
+        let sidebar_items = vec!["  Search", "󰐻  My Wave", "  My Favorites", "  Playlists"];
         f.render_widget(
             Sidebar::new(sidebar_items, self.app.state.ui.sidebar_index),
             sidebar_inner,
