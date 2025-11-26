@@ -118,7 +118,7 @@ impl<'a> Widget for LyricsWidget<'a> {
         let len = parsed.len();
         let first_ts = parsed.first().map(|(t, _)| *t).unwrap_or(0);
         let before_first = pos_ms < first_ts;
-        let intro_wait_active = before_first && first_ts >= 3000;
+        let intro_wait_active = before_first && first_ts >= 4000;
 
         let is_last_line = idx >= len.saturating_sub(1);
 
@@ -136,6 +136,25 @@ impl<'a> Widget for LyricsWidget<'a> {
             current_ts = 0;
             next_ts = first_ts;
         }
+
+        let phase_duration = next_ts.saturating_sub(current_ts);
+        let time_until_next = next_ts.saturating_sub(pos_ms);
+        let show_waiting_ui = phase_duration >= 4000;
+
+        let waiting_text = if show_waiting_ui {
+            if time_until_next <= 3000 {
+                let sec = (time_until_next as f64 / 1000.0).ceil() as u64;
+                if sec > 0 {
+                    format!("· {} ·", sec)
+                } else {
+                    "".to_string()
+                }
+            } else {
+                waiting_frame(pos_ms, 0)
+            }
+        } else {
+            "".to_string()
+        };
 
         let denom = if next_ts > current_ts {
             next_ts - current_ts
@@ -220,9 +239,13 @@ impl<'a> Widget for LyricsWidget<'a> {
             };
 
             let display_text = if is_waiting {
-                waiting_frame(pos_ms, 0)
+                waiting_text.clone()
             } else if line_text.is_empty() {
-                waiting_frame(pos_ms, 0)
+                if line_idx == idx {
+                    waiting_text.clone()
+                } else {
+                    "".to_string()
+                }
             } else {
                 line_text.clone()
             };
