@@ -221,6 +221,8 @@ impl<'a> Widget for LyricsWidget<'a> {
 
             let display_text = if is_waiting {
                 waiting_frame(pos_ms, 0)
+            } else if line_text.is_empty() {
+                waiting_frame(pos_ms, 0)
             } else {
                 line_text.clone()
             };
