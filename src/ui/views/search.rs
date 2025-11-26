@@ -173,7 +173,7 @@ impl View for Search {
                                 .first()
                                 .and_then(|a| a.name.as_deref())
                                 .unwrap_or("Unknown Artist");
-                            let content = format!("{}{}- {}", prefix, title, artist);
+                            let content = format!("{}{} - {}", prefix, title, artist);
                             let mut list_item = ListItem::new(format!("  {}", content));
                             if is_current {
                                 list_item = list_item.style(
