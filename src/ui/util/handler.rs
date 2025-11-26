@@ -200,6 +200,7 @@ impl EventHandler {
             }
             Event::FetchError(_e) => {}
             Event::TrackStarted(_track, _index) => {
+                app.state.data.lyrics = None;
                 if let Some(track) = app.ctx.audio_system.current_track() {
                     let format = track.lyrics_info.as_ref().and_then(|l| {
                         if l.has_available_sync_lyrics {

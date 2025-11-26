@@ -38,8 +38,14 @@ impl View for Lyrics {
     }
 
     async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
-        if let Event::LyricsFetched(lyrics) = event {
-            self.lyrics = lyrics.clone();
+        match event {
+            Event::TrackStarted(_, _) => {
+                self.lyrics = None;
+            }
+            Event::LyricsFetched(lyrics) => {
+                self.lyrics = lyrics.clone();
+            }
+            _ => {}
         }
     }
 
