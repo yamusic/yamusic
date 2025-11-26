@@ -16,7 +16,6 @@ pub struct QueueManager {
 
     pub repeat_mode: RepeatMode,
     pub is_shuffled: bool,
-    pub is_first_play: bool,
 
     pub history: Vec<Track>,
     pub history_index: usize,
@@ -44,7 +43,6 @@ impl QueueManager {
             current_track_index: 0,
             repeat_mode: RepeatMode::None,
             is_shuffled: false,
-            is_first_play: true,
             history: Vec::new(),
             history_index: 0,
             playback_context: PlaybackContext::Unknown,
@@ -120,15 +118,6 @@ impl QueueManager {
         {
             self.repeat_mode = RepeatMode::None;
             return None;
-        }
-
-        if self.is_first_play {
-            self.is_first_play = false;
-            let track = self.queue.get(self.current_track_index).cloned();
-            if let Some(t) = &track {
-                self.add_to_history(t.clone());
-            }
-            return track;
         }
 
         if let RepeatMode::Single = self.repeat_mode
@@ -213,7 +202,6 @@ impl QueueManager {
                     self.playback_context = PlaybackContext::Unknown;
                 }
 
-                self.is_first_play = false;
                 return Some(t);
             }
         }
@@ -329,8 +317,6 @@ impl QueueManager {
         if let Some(t) = &track {
             self.add_to_history(t.clone());
         }
-
-        self.is_first_play = false;
 
         track
     }
