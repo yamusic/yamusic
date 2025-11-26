@@ -338,10 +338,6 @@ fn perm(v: vec4<f32>) -> vec4<f32> {
     return mod_v4(((v * 34.0) + 1.0) * v, 289.0);
 }
 
-fn taylor_inv_sqrt(r: vec4<f32>) -> vec4<f32> {
-    return 1.79284291400159 - 0.85373472095314 * r;
-}
-
 fn simplex3(pos: vec3<f32>) -> f32 {
     let C = vec2<f32>(0.1666667, 0.3333333);
     let D = vec4<f32>(0.0, 0.5, 1.0, 2.0);
@@ -388,7 +384,7 @@ fn simplex3(pos: vec3<f32>) -> f32 {
     var q2 = vec3<f32>(a1.xy, h.z);
     var q3 = vec3<f32>(a1.zw, h.w);
 
-    let norm = taylor_inv_sqrt(vec4<f32>(dot(q0, q0), dot(q1, q1), dot(q2, q2), dot(q3, q3)));
+    let norm = inverseSqrt(vec4<f32>(dot(q0, q0), dot(q1, q1), dot(q2, q2), dot(q3, q3)));
     q0 = q0 * norm.x;
     q1 = q1 * norm.y;
     q2 = q2 * norm.z;
@@ -417,7 +413,7 @@ fn tri_field3d(seed: vec3<f32>, spd: f32) -> f32 {
     var p0 = seed;
     var base = seed;
 
-    for (var i = 0; i <= 4; i++) {
+    for (var i = 0; i < 4; i++) {
         let g = tri_vec(base * 0.01);
         p0 = p0 + (g + p.phase * 0.1 * spd);
         base = base * 4.0;
@@ -493,7 +489,7 @@ fn get_uv(ix: u32, iy: u32, y_offset: f32) -> vec2<f32> {
     let w = p.viewport.x;
     let h = p.viewport.y;
     let y_norm = (f32(iy) * 2.0 + y_offset) / (h * 2.0);
-    let x_norm = f32(ix) / w;
+    let x_norm = (f32(ix) + 0.5) / w;
     var uv = vec2<f32>(x_norm, y_norm) * 2.0 - 1.0;
     let min_dim = min(w, h * 2.0);
     let sx = w / min_dim / p.zoom;
@@ -504,19 +500,12 @@ fn get_uv(ix: u32, iy: u32, y_offset: f32) -> vec2<f32> {
 }
 
 fn calculate_spark(uv: vec2<f32>) -> f32 {
-    let ruv = uv * 2.0;
-    let pa = atan2(ruv.y, ruv.x);
-    let idx = (pa / 3.1415) * 0.5;
-
-    let ruv1 = spin2d(uv * 2.0, 3.1415);
-    let pa1 = atan2(ruv1.y, ruv1.x);
-    let idx1 = (pa1 / 3.1415) * 0.5;
-    let idx21 = (pa1 / 3.1415 + 1.0) * 0.5 * 3.1415;
-
-    var spark = tri_field3d(vec3<f32>(idx, 0.0, 0.0), 0.1);
-    let spark2 = tri_field3d(vec3<f32>(idx1, 0.0, idx1), 0.1);
-    let mix_amount = smoothstep(0.9, 1.0, sin(idx21));
-    spark = spark * (1.0 - mix_amount) + spark2 * mix_amount;
+    let len = length(uv);
+    let dir = select(vec2<f32>(1.0, 0.0), uv / len, len > 0.0001);
+    
+    let seed = vec3<f32>(dir.x, dir.y, 0.0) * 0.16;
+    
+    var spark = tri_field3d(seed, 0.1);
     
     let s2 = spark * spark;
     let s4 = s2 * s2;
@@ -527,49 +516,34 @@ fn calculate_spark(uv: vec2<f32>) -> f32 {
     return smoothstep(0.0, spark, 0.3) * spark;
 }
 
-fn calculate_band_noise(uv: vec2<f32>) -> vec3<f32> {
-    var noise_vals = vec3<f32>(0.0);
-    for (var i: i32 = 0; i < 3; i++) {
-        let idx_f = f32(i);
-        let rot = p.orbits[i];
-        let off = BASE_OFFSET + STEP_OFFSET * idx_f;
-        let noise_pos = spin2d(rot.xy, p.phase * rot.z);
-        let react_val = p.response[i];
-        
-        let transformed_uv = uv * (1.0 - react_val * 0.5) + noise_pos;
-        
-        let n_val = simplex3(vec3<f32>(transformed_uv * 1.2 + off, p.phase * 0.5 + off)) * 0.5 + 0.5;
-        noise_vals[i] = n_val;
-    }
-    return noise_vals;
-}
-
-fn shade_cell(ix: u32, iy: u32, lower_half: bool, spark: f32, n0: f32, band_noise: vec3<f32>) -> vec3<f32> {
-    let y_offset = select(0.0, 1.0, lower_half);
-    let uv = get_uv(ix, iy, y_offset);
-
+fn get_pixel_color(uv: vec2<f32>) -> vec3<f32> {
+    let spark = calculate_spark(uv);
+    let n0 = simplex3(vec3<f32>(uv * 1.2, p.phase * 0.5));
+    
     var color = p.backdrop.xyz;
 
     for (var i: i32 = 0; i < 3; i++) {
         let idx_f = f32(i);
-        let radius = BASE_RADIUS - STEP_RADIUS * idx_f;
+        let rot = p.orbits[i];
+        let off = BASE_OFFSET + STEP_OFFSET * idx_f;
+        let react_val = p.response[i];
+        
+        let noise_pos = spin2d(rot.xy, p.phase * rot.z);
+        let transformed_uv = uv * (1.0 - react_val * 0.5) + noise_pos;
+        let band_noise = simplex3(vec3<f32>(transformed_uv * 1.2 + off, p.phase * 0.5 + off)) * 0.5 + 0.5;
 
+        let radius = BASE_RADIUS - STEP_RADIUS * idx_f;
         let col1 = p.bands[i].xyz;
         let col2 = p.bands[i + 3].xyz;
-        let rot = p.orbits[i];
-
         let band_val = p.spectrum[i];
-        let react_val = p.response[i];
 
         let mixed_r = radius + (radius + 0.3 - radius) * n0;
         let w_ring = BASE_WIDTH - STEP_WIDTH * idx_f;
         let spark_base = (BASE_SPARK - STEP_SPARK * idx_f) * spark;
-        let off = BASE_OFFSET + STEP_OFFSET * idx_f;
-        let noise_pos = spin2d(rot.xy, p.phase * rot.z);
 
         let blob = compose_ring(
             uv,
-            band_noise[i],
+            band_noise,
             mixed_r,
             col1,
             col2,
@@ -603,13 +577,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let uv_center = get_uv(x, y, 0.5);
-    let spark = calculate_spark(uv_center);
-    let n0 = simplex3(vec3<f32>(uv_center * 1.2, p.phase * 0.5));
-    let band_noise = calculate_band_noise(uv_center);
+    let uv_top = get_uv(x, y, 0.5);
+    let top_color = get_pixel_color(uv_top);
 
-    let top_color = shade_cell(x, y, false, spark, n0, band_noise);
-    let bot_color = shade_cell(x, y, true, spark, n0, band_noise);
+    let uv_bot = get_uv(x, y, 1.5);
+    let bot_color = get_pixel_color(uv_bot);
 
     let idx = y * u32(p.viewport.x) + x;
     out_cells[idx * 2] = pack_rgb(top_color);
