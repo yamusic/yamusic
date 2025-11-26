@@ -201,14 +201,19 @@ impl EventHandler {
             Event::FetchError(_e) => {}
             Event::TrackStarted(_track, _index) => {
                 if let Some(track) = app.ctx.audio_system.current_track() {
-                    let format = if track
-                        .lyrics_info
-                        .as_ref()
-                        .is_some_and(|l| l.has_available_sync_lyrics)
-                    {
-                        LyricsFormat::LRC
-                    } else {
-                        LyricsFormat::TEXT
+                    let format = track.lyrics_info.as_ref().and_then(|l| {
+                        if l.has_available_sync_lyrics {
+                            Some(LyricsFormat::LRC)
+                        } else if l.has_available_text_lyrics {
+                            Some(LyricsFormat::TEXT)
+                        } else {
+                            None
+                        }
+                    });
+
+                    let format = match format {
+                        Some(f) => f,
+                        None => return,
                     };
 
                     let track_id = track.id.clone();

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::{Frame, layout::Rect};
+use yandex_music::model::info::lyrics::LyricsFormat;
 
 use crate::event::events::Event;
 use crate::ui::{
@@ -17,7 +18,11 @@ pub struct Lyrics {
 
 #[async_trait]
 impl View for Lyrics {
-    fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, ctx: &AppContext) {
+    fn render(&mut self, f: &mut Frame, area: Rect, state: &AppState, ctx: &AppContext) {
+        if self.lyrics.is_none() && state.data.lyrics.is_some() {
+            self.lyrics = state.data.lyrics.clone();
+        }
+
         let track_progress = ctx.audio_system.track_progress();
         let widget = LyricsWidget::new(self.lyrics.as_deref(), track_progress);
         f.render_widget(widget, area);
@@ -35,6 +40,40 @@ impl View for Lyrics {
     async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
         if let Event::LyricsFetched(lyrics) = event {
             self.lyrics = lyrics.clone();
+        }
+    }
+
+    async fn on_mount(&mut self, ctx: &AppContext) {
+        if let Some(track) = ctx.audio_system.current_track() {
+            let format = track.lyrics_info.as_ref().and_then(|l| {
+                if l.has_available_sync_lyrics {
+                    Some(LyricsFormat::LRC)
+                } else if l.has_available_text_lyrics {
+                    Some(LyricsFormat::TEXT)
+                } else {
+                    None
+                }
+            });
+
+            let format = match format {
+                Some(f) => f,
+                None => return,
+            };
+
+            let track_id = track.id.clone();
+            let api = ctx.api.clone();
+            let tx = ctx.event_tx.clone();
+
+            tokio::spawn(async move {
+                match api.fetch_lyrics(track_id, format).await {
+                    Ok(lyrics) => {
+                        let _ = tx.send(Event::LyricsFetched(lyrics));
+                    }
+                    Err(_) => {
+                        let _ = tx.send(Event::LyricsFetched(None));
+                    }
+                }
+            });
         }
     }
 }
