@@ -21,6 +21,7 @@ pub struct QueueManager {
     pub history_index: usize,
 
     pub playback_context: PlaybackContext,
+    pub wave_session: Option<Session>,
 }
 
 pub enum PlaybackContext {
@@ -46,6 +47,7 @@ impl QueueManager {
             history: Vec::new(),
             history_index: 0,
             playback_context: PlaybackContext::Unknown,
+            wave_session: None,
         }
     }
 
@@ -65,34 +67,54 @@ impl QueueManager {
         self.current_track_index = 0;
         self.history.clear();
         self.history_index = 0;
+        self.wave_session = None;
 
         match self.playback_context {
             PlaybackContext::Playlist(_)
             | PlaybackContext::Artist(_)
             | PlaybackContext::Album(_)
-            | PlaybackContext::List
-            | PlaybackContext::Wave(_) => {
+            | PlaybackContext::List => {
                 if start_index > 0 {
                     tracks.drain(0..start_index);
                 }
                 self.queue = tracks;
-                self.current_track_index = 0;
+            }
+            PlaybackContext::Wave(ref session) => {
+                if start_index > 0 {
+                    tracks.drain(0..start_index);
+                }
+                self.queue = tracks;
+                self.wave_session = Some(session.clone());
             }
             PlaybackContext::Track | PlaybackContext::Unknown => {
                 self.queue.clear();
                 if start_index < tracks.len() {
                     let track = tracks.swap_remove(start_index);
                     let track_id = track.id.clone();
-                    self.queue.push(track);
-                    self.current_track_index = 0;
+                    self.queue.push(track.clone());
 
-                    let similar_tracks = self
-                        .api
-                        .fetch_similar_tracks(track_id)
-                        .await
-                        .unwrap_or_default();
-                    for sim_track in similar_tracks {
-                        self.queue.push(sim_track);
+                    if let PlaybackContext::Track = self.playback_context {
+                        if !track.track_source.as_ref().is_some_and(|s| s == "UGC") {
+                            let session = self
+                                .api
+                                .create_session(vec![format!("track:{track_id}")])
+                                .await
+                                .unwrap();
+
+                            let album_id = track.albums[0].id.unwrap();
+                            let session_tracks = self
+                                .api
+                                .get_session_tracks(
+                                    session.batch_id.clone(),
+                                    vec![format!("{track_id}:{album_id}")],
+                                )
+                                .await
+                                .unwrap();
+
+                            for sim_track in session_tracks.sequence {
+                                self.queue.push(sim_track.track);
+                            }
+                        }
                     }
                 }
             }
