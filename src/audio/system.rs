@@ -47,7 +47,19 @@ impl AudioSystem {
             Some(PlaylistTracks::WithInfo(tracks)) => {
                 tracks.iter().map(|t| t.track.clone()).collect()
             }
-            Some(PlaylistTracks::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
+            Some(PlaylistTracks::Partial(tracks)) => {
+                let track_ids: Vec<String> = tracks
+                    .iter()
+                    .map(|p| {
+                        if let Some(album_id) = p.album_id {
+                            format!("{}:{}", p.id, album_id)
+                        } else {
+                            p.id.clone()
+                        }
+                    })
+                    .collect();
+                self.api.fetch_tracks_by_ids(track_ids).await?
+            }
             None => vec![],
         };
         let context = PlaybackContext::Playlist(playlist);
@@ -65,7 +77,19 @@ impl AudioSystem {
             Some(PlaylistTracks::WithInfo(tracks)) => {
                 tracks.iter().map(|t| t.track.clone()).collect()
             }
-            Some(PlaylistTracks::Partial(tracks)) => self.api.fetch_tracks_partial(tracks).await?,
+            Some(PlaylistTracks::Partial(tracks)) => {
+                let track_ids: Vec<String> = tracks
+                    .iter()
+                    .map(|p| {
+                        if let Some(album_id) = p.album_id {
+                            format!("{}:{}", p.id, album_id)
+                        } else {
+                            p.id.clone()
+                        }
+                    })
+                    .collect();
+                self.api.fetch_tracks_by_ids(track_ids).await?
+            }
             None => vec![],
         };
 
