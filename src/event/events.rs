@@ -12,6 +12,7 @@ pub enum Event {
     Initialize,
     TrackStarted(Track, usize),
     TrackEnded,
+    QueueEnded,
     PlaybackProgress(u64),
     TracksFetched(Vec<Track>),
     TrackFetched(Track),

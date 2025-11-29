@@ -155,7 +155,7 @@ impl AudioSystem {
                 .handle_command(AudioCommand::PlayTrack(next_track))
                 .await;
         } else {
-            let _ = self.event_tx.send(Event::TrackEnded);
+            let _ = self.event_tx.send(Event::QueueEnded);
         }
     }
 
