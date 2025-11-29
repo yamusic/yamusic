@@ -523,7 +523,7 @@ impl View for MyWave {
         ctx: &AppContext,
     ) -> Option<Action> {
         if key.code == KeyCode::Char(' ') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let mut seeds = Vec::new();
+            let mut seeds = vec!["user:onyourwave".to_string()];
             for (i, &sel_idx) in self.selections.iter().enumerate() {
                 if let Some(idx) = sel_idx {
                     if let Some(item) = self.waves[i].items.get(idx) {
