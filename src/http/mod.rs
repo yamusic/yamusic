@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use yandex_music::{
-    YandexMusicClient,
+    DEFAULT_CLIENT_ID, YandexMusicClient,
     api::{
         album::get_album::GetAlbumOptions,
         artist::get_artist_tracks::ArtistTracksOptions,
@@ -33,13 +34,29 @@ pub struct ApiService {
 
 impl ApiService {
     pub async fn new() -> color_eyre::Result<Self> {
-        let client = Arc::new(
-            YandexMusicClient::builder(
-                &std::env::var("YANDEX_MUSIC_TOKEN")
-                    .expect("YANDEX_MUSIC_TOKEN environment variable must be set"),
-            )
-            .build()?,
-        );
+        let client = {
+            let mut headers = HeaderMap::with_capacity(3);
+
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!(
+                    "OAuth {}",
+                    &std::env::var("YANDEX_MUSIC_TOKEN")
+                        .expect("YANDEX_MUSIC_TOKEN environment variable must be set")
+                ))?,
+            );
+            headers.insert(
+                "X-Yandex-Music-Client",
+                HeaderValue::from_str(DEFAULT_CLIENT_ID)?,
+            );
+            headers.insert("Accept-Language", HeaderValue::from_str("en")?);
+
+            reqwest::Client::builder()
+                .default_headers(headers)
+                .build()?
+        };
+
+        let client = Arc::new(YandexMusicClient::from_client(client));
         let user_id = client
             .get_account_status()
             .await?
