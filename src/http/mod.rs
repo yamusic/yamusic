@@ -18,12 +18,12 @@ use yandex_music::{
     },
     model::{
         album::Album,
-        info::{file_info::Codec, lyrics::LyricsFormat},
+        info::{file_info::Codec, lyrics::LyricsFormat, pager::Pager},
         landing::wave::LandingWave,
         playlist::Playlist,
         rotor::session::Session,
         search::Search,
-        track::{PartialTrack, Track},
+        track::Track,
     },
 };
 
@@ -72,6 +72,11 @@ impl ApiService {
         Ok(self.client.search(&opts).await?)
     }
 
+    pub async fn search_paginated(&self, query: &str, page: u32) -> color_eyre::Result<Search> {
+        let opts = SearchOptions::new(query).page(page);
+        Ok(self.client.search(&opts).await?)
+    }
+
     pub async fn fetch_liked_tracks(&self) -> color_eyre::Result<Playlist> {
         let opts = GetPlaylistsOptions::new(self.user_id)
             .kinds([3u32])
@@ -102,6 +107,28 @@ impl ApiService {
             .ok_or_else(|| color_eyre::eyre::eyre!("Playlist not found"))
     }
 
+    pub async fn fetch_playlist_bare(&self, kind: u32) -> color_eyre::Result<Playlist> {
+        self.client
+            .get_playlists(
+                &GetPlaylistsOptions::new(self.user_id)
+                    .kinds([kind])
+                    .with_tracks(true)
+                    .rich_tracks(false),
+            )
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| color_eyre::eyre::eyre!("Playlist not found"))
+    }
+
+    pub async fn fetch_tracks_by_ids(
+        &self,
+        track_album_ids: Vec<String>,
+    ) -> color_eyre::Result<Vec<Track>> {
+        let opts = GetTracksOptions::new(track_album_ids);
+        Ok(self.client.get_tracks(&opts).await?)
+    }
+
     pub async fn fetch_playlists(&self, kinds: Vec<u32>) -> color_eyre::Result<Playlist> {
         self.client
             .get_playlists(
@@ -117,14 +144,6 @@ impl ApiService {
 
     pub async fn fetch_tracks(&self, track_ids: Vec<String>) -> color_eyre::Result<Vec<Track>> {
         let opts = GetTracksOptions::new(track_ids);
-        Ok(self.client.get_tracks(&opts).await?)
-    }
-
-    pub async fn fetch_tracks_partial(
-        &self,
-        tracks: &[PartialTrack],
-    ) -> color_eyre::Result<Vec<Track>> {
-        let opts = GetTracksOptions::new(tracks.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
         Ok(self.client.get_tracks(&opts).await?)
     }
 
@@ -167,6 +186,19 @@ impl ApiService {
     pub async fn fetch_artist_tracks(&self, artist_id: String) -> color_eyre::Result<Vec<Track>> {
         let opts = ArtistTracksOptions::new(artist_id);
         Ok(self.client.get_artist_tracks(&opts).await?.tracks)
+    }
+
+    pub async fn fetch_artist_tracks_paginated(
+        &self,
+        artist_id: String,
+        page: u32,
+        page_size: u32,
+    ) -> color_eyre::Result<(Vec<Track>, Pager)> {
+        let opts = ArtistTracksOptions::new(artist_id)
+            .page(page)
+            .page_size(page_size);
+        let result = self.client.get_artist_tracks(&opts).await?;
+        Ok((result.tracks, result.pager))
     }
 
     pub async fn fetch_waves(&self) -> color_eyre::Result<Vec<LandingWave>> {

@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
-use yandex_music::model::{artist::Artist, track::Track};
+use yandex_music::model::{artist::Artist, info::pager::Pager, track::Track};
 
 use crate::{
     event::events::Event,
@@ -22,11 +22,15 @@ use crate::{
     util::colors,
 };
 
+const PAGE_SIZE: u32 = 10;
+
 pub struct ArtistDetail {
     pub artist: Artist,
     pub tracks: Vec<Track>,
     pub list_state: ListState,
     pub is_loading: bool,
+    pub is_loading_more: bool,
+    pub pager: Option<Pager>,
 }
 
 impl ArtistDetail {
@@ -36,7 +40,65 @@ impl ArtistDetail {
             tracks: Vec::new(),
             list_state: ListState::default(),
             is_loading: true,
+            is_loading_more: false,
+            pager: None,
         }
+    }
+
+    fn has_more_pages(&self) -> bool {
+        if let Some(pager) = &self.pager {
+            let total_pages = (pager.total + pager.per_page - 1) / pager.per_page;
+            pager.page + 1 < total_pages
+        } else {
+            false
+        }
+    }
+
+    fn should_load_more(&self) -> bool {
+        if self.is_loading_more || !self.has_more_pages() {
+            return false;
+        }
+
+        if let Some(selected) = self.list_state.selected() {
+            let len = self.tracks.len();
+            len > 0 && selected >= len.saturating_sub(2)
+        } else {
+            false
+        }
+    }
+
+    fn trigger_load_more(&mut self, ctx: &AppContext) {
+        if self.is_loading_more || !self.has_more_pages() {
+            return;
+        }
+
+        let Some(pager) = &self.pager else {
+            return;
+        };
+
+        let artist_id = match &self.artist.id {
+            Some(id) => id.clone(),
+            None => return,
+        };
+
+        self.is_loading_more = true;
+        let next_page = pager.page + 1;
+        let api = ctx.api.clone();
+        let tx = ctx.event_tx.clone();
+
+        tokio::spawn(async move {
+            match api
+                .fetch_artist_tracks_paginated(artist_id.clone(), next_page, PAGE_SIZE)
+                .await
+            {
+                Ok((tracks, pager)) => {
+                    let _ = tx.send(Event::ArtistTracksPageFetched(artist_id, tracks, pager));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchError(e.to_string()));
+                }
+            }
+        });
     }
 }
 
@@ -72,6 +134,21 @@ impl View for ArtistDetail {
             description
         };
 
+        let track_info = if let Some(pager) = &self.pager {
+            format!(
+                "{}/{} tracks{}",
+                self.tracks.len(),
+                pager.total,
+                if self.is_loading_more {
+                    " (loading...)"
+                } else {
+                    ""
+                }
+            )
+        } else {
+            format!("{} tracks", self.tracks.len())
+        };
+
         let header = Paragraph::new(vec![
             Line::from(Span::styled(
                 name,
@@ -80,7 +157,7 @@ impl View for ArtistDetail {
                     .fg(colors::PRIMARY),
             )),
             Line::from(genres),
-            Line::from(format!("{} likes", likes)),
+            Line::from(format!("{} likes • {}", likes, track_info)),
             Line::from(Span::styled(
                 description,
                 Style::default().fg(ratatui::style::Color::Gray),
@@ -156,6 +233,10 @@ impl View for ArtistDetail {
                         .selected()
                         .map_or(0, |i| if i >= len - 1 { i } else { i + 1 });
                     self.list_state.select(Some(i));
+
+                    if self.should_load_more() {
+                        self.trigger_load_more(ctx);
+                    }
                 }
                 None
             }
@@ -166,6 +247,22 @@ impl View for ArtistDetail {
                         .selected()
                         .map_or(0, |i| if i == 0 { 0 } else { i - 1 });
                     self.list_state.select(Some(i));
+                }
+                None
+            }
+            KeyCode::Char('g') => {
+                if len > 0 {
+                    self.list_state.select(Some(0));
+                }
+                None
+            }
+            KeyCode::Char('G') => {
+                if len > 0 {
+                    self.list_state.select(Some(len - 1));
+
+                    if self.should_load_more() {
+                        self.trigger_load_more(ctx);
+                    }
                 }
                 None
             }
@@ -228,12 +325,27 @@ impl View for ArtistDetail {
     }
 
     async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
-        if let Event::ArtistTracksFetched(tracks) = event {
-            self.tracks = tracks.clone();
-            self.is_loading = false;
-            if !self.tracks.is_empty() {
-                self.list_state.select(Some(0));
+        match event {
+            Event::ArtistTracksFetched(tracks, pager) => {
+                self.tracks = tracks.clone();
+                self.pager = Some(pager.clone());
+                self.is_loading = false;
+                if !self.tracks.is_empty() {
+                    self.list_state.select(Some(0));
+                }
             }
+            Event::ArtistTracksPageFetched(artist_id, tracks, pager) => {
+                if self.artist.id.as_ref() == Some(artist_id) {
+                    self.tracks.extend(tracks.clone());
+                    self.pager = Some(pager.clone());
+                    self.is_loading_more = false;
+
+                    if self.should_load_more() {
+                        self.trigger_load_more(_ctx);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
