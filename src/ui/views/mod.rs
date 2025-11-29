@@ -1,6 +1,5 @@
 pub mod album_detail;
 pub mod artist_detail;
-pub mod liked_tracks;
 pub mod lyrics;
 pub mod my_wave;
 pub mod my_wave_gpu;
@@ -12,7 +11,6 @@ pub mod track_list;
 
 pub use album_detail::AlbumDetail;
 pub use artist_detail::ArtistDetail;
-pub use liked_tracks::LikedTracks;
 pub use lyrics::Lyrics;
 pub use my_wave::MyWave;
 pub use playlist_detail::PlaylistDetail;

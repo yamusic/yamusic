@@ -17,8 +17,8 @@ use crate::{
         tui::{self, TerminalEvent},
         util::handler::EventHandler,
         views::{
-            AlbumDetail, ArtistDetail, LikedTracks, Lyrics, MyWave, PlaylistDetail, Playlists,
-            Search, TrackDetail, TrackList,
+            AlbumDetail, ArtistDetail, Lyrics, MyWave, PlaylistDetail, Playlists, Search,
+            TrackDetail, TrackList,
         },
     },
     util::task::TaskManager,
@@ -113,7 +113,14 @@ impl App {
         match self.state.ui.sidebar_index {
             0 => self.router.push(Box::new(Search::default())),
             1 => self.router.push(Box::new(MyWave::default())),
-            2 => self.router.push(Box::new(LikedTracks::default())),
+            2 => {
+                self.router.push(Box::new(PlaylistDetail::loading()));
+                let _ = self
+                    .ctx
+                    .event_tx
+                    .send(crate::event::events::Event::PlaylistKindSelected(3));
+                return;
+            }
             3 => self.router.push(Box::new(Playlists::default())),
             _ => {}
         }
@@ -133,10 +140,7 @@ impl App {
                 self.state.ui.sidebar_index = 1;
                 self.update_sidebar_view().await;
             }
-            ViewRoute::LikedTracks => {
-                self.state.ui.sidebar_index = 2;
-                self.update_sidebar_view().await;
-            }
+
             ViewRoute::Playlists => {
                 self.state.ui.sidebar_index = 3;
                 self.update_sidebar_view().await;
@@ -150,10 +154,10 @@ impl App {
             }
             ViewRoute::PlaylistDetail(playlist) => {
                 self.state.ui.current_route = crate::ui::state::Route::PlaylistDetail;
-                self.router.push(Box::new(PlaylistDetail::new(playlist)));
-                if let Some(view) = self.router.active_view_mut() {
-                    view.on_mount(&self.ctx).await;
-                }
+                let _ = self
+                    .ctx
+                    .event_tx
+                    .send(crate::event::events::Event::PlaylistSelected(playlist));
             }
             ViewRoute::AlbumDetail(album) => {
                 self.state.ui.current_route = crate::ui::state::Route::AlbumDetail;
