@@ -8,9 +8,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
-use yandex_music::model::{playlist::Playlist, playlist::PlaylistTracks, track::Track};
+use yandex_music::model::{playlist::Playlist, track::Track};
 
 use crate::{
+    audio::queue::PlaybackContext,
     event::events::Event,
     ui::util::get_active_track_icon,
     ui::{
@@ -19,7 +20,7 @@ use crate::{
         state::AppState,
         traits::{Action, View},
     },
-    util::colors,
+    util::{colors, track::extract_track_ids},
 };
 
 const PAGE_SIZE: usize = 10;
@@ -68,42 +69,6 @@ impl PlaylistDetail {
             all_track_ids: Vec::new(),
             loaded_count: 0,
             is_loading_more: false,
-        }
-    }
-
-    fn extract_track_ids(playlist: &Playlist) -> Vec<String> {
-        match &playlist.tracks {
-            Some(PlaylistTracks::Full(tracks)) => tracks
-                .iter()
-                .map(|t| {
-                    if let Some(album_id) = t.albums.first().and_then(|a| a.id) {
-                        format!("{}:{}", t.id, album_id)
-                    } else {
-                        t.id.clone()
-                    }
-                })
-                .collect(),
-            Some(PlaylistTracks::WithInfo(tracks)) => tracks
-                .iter()
-                .map(|t| {
-                    if let Some(album_id) = t.track.albums.first().and_then(|a| a.id) {
-                        format!("{}:{}", t.track.id, album_id)
-                    } else {
-                        t.track.id.clone()
-                    }
-                })
-                .collect(),
-            Some(PlaylistTracks::Partial(partial)) => partial
-                .iter()
-                .map(|p| {
-                    if let Some(album_id) = p.album_id {
-                        format!("{}:{}", p.id, album_id)
-                    } else {
-                        p.id.clone()
-                    }
-                })
-                .collect(),
-            None => vec![],
         }
     }
 
@@ -361,15 +326,13 @@ impl View for PlaylistDetail {
             }
             KeyCode::Enter => {
                 if let Some(i) = self.list_state.selected() {
-                    let tracks_to_play = if i > 0 {
-                        self.tracks.iter().skip(i).cloned().collect()
-                    } else {
-                        self.tracks.clone()
-                    };
-
-                    let _ = ctx
-                        .event_tx
-                        .send(crate::event::events::Event::TracksFetched(tracks_to_play));
+                    if let Some(playlist) = &self.playlist {
+                        return Some(Action::PlayContext(
+                            PlaybackContext::Playlist(playlist.clone()),
+                            self.tracks.clone(),
+                            i,
+                        ));
+                    }
                 }
                 None
             }
@@ -382,11 +345,13 @@ impl View for PlaylistDetail {
                         .create_session(vec![format!("playlist:{playlist_author}_{playlist_kind}")])
                         .await
                         .unwrap();
-                    let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+                    let tracks: Vec<_> = session.sequence.iter().map(|s| s.track.clone()).collect();
 
-                    let _ = ctx
-                        .event_tx
-                        .send(crate::event::events::Event::WaveReady(session, tracks));
+                    return Some(Action::PlayContext(
+                        PlaybackContext::Wave(session),
+                        tracks,
+                        0,
+                    ));
                 }
                 None
             }
@@ -402,11 +367,13 @@ impl View for PlaylistDetail {
                         .create_session(vec![format!("track:{}", track_id.unwrap())])
                         .await
                         .unwrap();
-                    let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+                    let tracks: Vec<_> = session.sequence.iter().map(|s| s.track.clone()).collect();
 
-                    let _ = ctx
-                        .event_tx
-                        .send(crate::event::events::Event::WaveReady(session, tracks));
+                    return Some(Action::PlayContext(
+                        PlaybackContext::Wave(session),
+                        tracks,
+                        0,
+                    ));
                 }
                 None
             }
@@ -421,7 +388,11 @@ impl View for PlaylistDetail {
                     || self.playlist.as_ref().map(|p| p.kind) == Some(playlist.kind);
 
                 if should_accept {
-                    self.all_track_ids = Self::extract_track_ids(playlist);
+                    self.all_track_ids = playlist
+                        .tracks
+                        .as_ref()
+                        .map(extract_track_ids)
+                        .unwrap_or_default();
                     self.playlist = Some(playlist.clone());
                     self.loaded_count = 0;
                     self.is_loading_more = false;

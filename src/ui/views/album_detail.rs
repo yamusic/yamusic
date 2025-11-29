@@ -11,6 +11,7 @@ use ratatui::{
 use yandex_music::model::{album::Album, track::Track};
 
 use crate::{
+    audio::queue::PlaybackContext,
     event::events::Event,
     ui::util::get_active_track_icon,
     ui::{
@@ -177,15 +178,11 @@ impl View for AlbumDetail {
             }
             KeyCode::Enter => {
                 if let Some(i) = self.list_state.selected() {
-                    let tracks_to_play = if i > 0 {
-                        self.tracks.iter().skip(i).cloned().collect()
-                    } else {
-                        self.tracks.clone()
-                    };
-
-                    let _ = ctx
-                        .event_tx
-                        .send(crate::event::events::Event::TracksFetched(tracks_to_play));
+                    return Some(Action::PlayContext(
+                        PlaybackContext::Album(self.album.clone()),
+                        self.tracks.clone(),
+                        i,
+                    ));
                 }
                 None
             }
@@ -201,13 +198,13 @@ impl View for AlbumDetail {
                     .create_session(vec![format!("album:{}", album_id.unwrap())])
                     .await
                     .unwrap();
-                let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+                let tracks: Vec<_> = session.sequence.iter().map(|s| s.track.clone()).collect();
 
-                let _ = ctx
-                    .event_tx
-                    .send(crate::event::events::Event::WaveReady(session, tracks));
-
-                None
+                return Some(Action::PlayContext(
+                    PlaybackContext::Wave(session),
+                    tracks,
+                    0,
+                ));
             }
             KeyCode::Char('w') => {
                 if let Some(i) = self.list_state.selected() {
@@ -221,11 +218,13 @@ impl View for AlbumDetail {
                         .create_session(vec![format!("track:{}", track_id.unwrap())])
                         .await
                         .unwrap();
-                    let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+                    let tracks: Vec<_> = session.sequence.iter().map(|s| s.track.clone()).collect();
 
-                    let _ = ctx
-                        .event_tx
-                        .send(crate::event::events::Event::WaveReady(session, tracks));
+                    return Some(Action::PlayContext(
+                        PlaybackContext::Wave(session),
+                        tracks,
+                        0,
+                    ));
                 }
                 None
             }
