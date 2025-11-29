@@ -106,6 +106,9 @@ impl EventHandler {
                 app.state.data.lyrics = None;
                 app.ctx.audio_system.on_track_ended().await;
             }
+            Event::QueueEnded => {
+                app.state.data.lyrics = None;
+            }
             Event::TracksFetched(tracks) => {
                 app.ctx.audio_system.load_tracks(tracks).await;
             }
