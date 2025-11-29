@@ -126,6 +126,26 @@ impl View for TrackDetail {
                 let _ = ctx.event_tx.send(Event::Play(0));
                 Some(Action::Back)
             }
+            KeyCode::Char('w') => {
+                let track = self.track.clone();
+
+                if track.track_source.is_some_and(|s| s == "UGC") {
+                    return None;
+                }
+
+                let session = ctx
+                    .api
+                    .create_session(vec![format!("track:{}", track.id)])
+                    .await
+                    .unwrap();
+                let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+
+                let _ = ctx
+                    .event_tx
+                    .send(crate::event::events::Event::WaveReady(session, tracks));
+
+                None
+            }
             _ => None,
         }
     }

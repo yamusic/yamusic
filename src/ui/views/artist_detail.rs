@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use crossterm::event::KeyModifiers;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -179,6 +180,46 @@ impl View for ArtistDetail {
                     let _ = ctx
                         .event_tx
                         .send(crate::event::events::Event::TracksFetched(tracks_to_play));
+                }
+                None
+            }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+                let artist_id = self.artist.id.clone();
+
+                if artist_id.is_none() {
+                    return None;
+                }
+
+                let session = ctx
+                    .api
+                    .create_session(vec![format!("artist:{}", artist_id.unwrap())])
+                    .await
+                    .unwrap();
+                let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+
+                let _ = ctx
+                    .event_tx
+                    .send(crate::event::events::Event::WaveReady(session, tracks));
+
+                None
+            }
+            KeyCode::Char('w') => {
+                if let Some(i) = self.list_state.selected() {
+                    let track_id = self.tracks.get(i).as_ref().map(|track| track.id.clone());
+                    if track_id.is_none() {
+                        return None;
+                    }
+
+                    let session = ctx
+                        .api
+                        .create_session(vec![format!("track:{}", track_id.unwrap())])
+                        .await
+                        .unwrap();
+                    let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+
+                    let _ = ctx
+                        .event_tx
+                        .send(crate::event::events::Event::WaveReady(session, tracks));
                 }
                 None
             }
