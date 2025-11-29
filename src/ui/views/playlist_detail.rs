@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use crossterm::event::KeyModifiers;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
@@ -22,30 +23,58 @@ use crate::{
 };
 
 pub struct PlaylistDetail {
-    pub playlist: Playlist,
+    pub playlist: Option<Playlist>,
     pub tracks: Vec<Track>,
     pub list_state: ListState,
-    pub is_loading: bool,
 }
 
 impl PlaylistDetail {
-    pub fn new(playlist: Playlist) -> Self {
+    pub fn loading() -> Self {
         Self {
-            playlist,
+            playlist: None,
             tracks: Vec::new(),
             list_state: ListState::default(),
-            is_loading: true,
+        }
+    }
+
+    pub fn new(playlist: Playlist) -> Self {
+        Self {
+            playlist: Some(playlist),
+            tracks: Vec::new(),
+            list_state: ListState::default(),
+        }
+    }
+
+    pub fn with_tracks(playlist: Playlist, tracks: Vec<Track>) -> Self {
+        let mut list_state = ListState::default();
+        if !tracks.is_empty() {
+            list_state.select(Some(0));
+        }
+        Self {
+            playlist: Some(playlist),
+            tracks,
+            list_state,
         }
     }
 }
 
 #[async_trait]
 impl View for PlaylistDetail {
-    fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, _ctx: &AppContext) {
-        if self.is_loading && self.tracks.is_empty() {
+    fn render(&mut self, f: &mut Frame, area: Rect, _state: &AppState, ctx: &AppContext) {
+        if self.playlist.is_none() {
             let spinner = Spinner::default()
                 .with_style(Style::default().fg(colors::PRIMARY))
-                .with_label("Loading tracks...".to_string());
+                .with_label("Loading...".to_string());
+            f.render_widget(spinner, area);
+            return;
+        }
+
+        let playlist = self.playlist.as_ref().unwrap();
+
+        if self.tracks.is_empty() {
+            let spinner = Spinner::default()
+                .with_style(Style::default().fg(colors::PRIMARY))
+                .with_label(format!("Loading {}...", playlist.title));
             f.render_widget(spinner, area);
             return;
         }
@@ -55,12 +84,12 @@ impl View for PlaylistDetail {
             .constraints([Constraint::Length(6), Constraint::Min(0)])
             .split(area);
 
-        let title = self.playlist.title.clone();
-        let owner = self.playlist.owner.name.clone().unwrap_or_default();
-        let description = self.playlist.description.clone().unwrap_or_default();
-        let likes = self.playlist.likes_count;
-        let track_count = self.playlist.track_count;
-        let duration_secs = self.playlist.duration.as_secs();
+        let title = playlist.title.clone();
+        let owner = playlist.owner.name.clone().unwrap_or_default();
+        let description = playlist.description.clone().unwrap_or_default();
+        let likes = playlist.likes_count;
+        let track_count = playlist.track_count;
+        let duration_secs = playlist.duration.as_secs();
         let duration_str = format!(
             "{:02}:{:02}:{:02}",
             duration_secs / 3600,
@@ -93,8 +122,8 @@ impl View for PlaylistDetail {
 
         f.render_widget(header, chunks[0]);
 
-        let current_track_id = _ctx.audio_system.current_track().map(|t| t.id);
-        let is_playing = _ctx.audio_system.is_playing();
+        let current_track_id = ctx.audio_system.current_track().map(|t| t.id);
+        let is_playing = ctx.audio_system.is_playing();
 
         let items: Vec<ListItem> = self
             .tracks
@@ -108,15 +137,23 @@ impl View for PlaylistDetail {
                 };
 
                 let title = track.title.as_deref().unwrap_or("Unknown Title");
-                let artists = track
-                    .artists
-                    .iter()
-                    .map(|a| a.name.as_deref().unwrap_or("Unknown Artist"))
-                    .collect::<Vec<&str>>()
-                    .join(", ");
+                let mut spans = Vec::with_capacity(5);
+                spans.push(Span::raw(prefix));
+                spans.push(Span::raw(title));
+                spans.push(Span::raw(" - "));
 
-                let content = format!("{}{}- {}", prefix, title, artists);
-                let mut item = ListItem::new(content);
+                if let Some(first_artist) = track.artists.first() {
+                    spans.push(Span::raw(
+                        first_artist.name.as_deref().unwrap_or("Unknown Artist"),
+                    ));
+                    if track.artists.len() > 1 {
+                        spans.push(Span::raw(", ..."));
+                    }
+                } else {
+                    spans.push(Span::raw("Unknown Artist"));
+                }
+
+                let mut item = ListItem::new(Line::from(spans));
 
                 if is_current {
                     item = item.style(
@@ -182,16 +219,58 @@ impl View for PlaylistDetail {
                 }
                 None
             }
+            KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+                if let Some(playlist) = &self.playlist {
+                    let playlist_author = playlist.owner.login.clone();
+                    let playlist_kind = playlist.kind;
+                    let session = ctx
+                        .api
+                        .create_session(vec![format!("playlist:{playlist_author}_{playlist_kind}")])
+                        .await
+                        .unwrap();
+                    let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+
+                    let _ = ctx
+                        .event_tx
+                        .send(crate::event::events::Event::WaveReady(session, tracks));
+                }
+                None
+            }
+            KeyCode::Char('w') => {
+                if let Some(i) = self.list_state.selected() {
+                    let track_id = self.tracks.get(i).as_ref().map(|track| track.id.clone());
+                    if track_id.is_none() {
+                        return None;
+                    }
+
+                    let session = ctx
+                        .api
+                        .create_session(vec![format!("track:{}", track_id.unwrap())])
+                        .await
+                        .unwrap();
+                    let tracks = session.sequence.iter().map(|s| s.track.clone()).collect();
+
+                    let _ = ctx
+                        .event_tx
+                        .send(crate::event::events::Event::WaveReady(session, tracks));
+                }
+                None
+            }
             _ => None,
         }
     }
 
     async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
-        if let Event::PlaylistTracksFetched(tracks) = event {
-            self.tracks = tracks.clone();
-            self.is_loading = false;
-            if !self.tracks.is_empty() {
-                self.list_state.select(Some(0));
+        if let Event::PlaylistFetched(playlist, tracks) = event {
+            let should_accept = self.playlist.is_none()
+                || self.playlist.as_ref().map(|p| p.kind) == Some(playlist.kind);
+
+            if should_accept {
+                self.playlist = Some(playlist.clone());
+                self.tracks = tracks.clone();
+                if !self.tracks.is_empty() && self.list_state.selected().is_none() {
+                    self.list_state.select(Some(0));
+                }
             }
         }
     }

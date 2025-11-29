@@ -26,7 +26,6 @@ pub enum AppMessage {
     ToggleQueue,
 
     // Data Loaded
-    LikedTracksLoaded(Vec<Track>),
     PlaylistsLoaded(Vec<Playlist>),
     PlaylistTracksLoaded(Vec<Track>),
     AlbumTracksLoaded(Vec<Track>),
@@ -47,7 +46,6 @@ pub enum AppMessage {
 pub enum ViewRoute {
     MyWave,
     TrackList,
-    LikedTracks,
     Playlists,
     Search,
     PlaylistDetail(Playlist),
