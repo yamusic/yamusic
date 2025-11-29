@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use yandex_music::model::{
-    album::Album, artist::Artist, playlist::Playlist, rotor::session::Session, search::Search,
-    track::Track,
+    album::Album, artist::Artist, info::pager::Pager, playlist::Playlist, rotor::session::Session,
+    search::Search, track::Track,
 };
 
 #[derive(Debug, Clone)]
@@ -15,9 +15,13 @@ pub enum Event {
     PlaybackProgress(u64),
     TracksFetched(Vec<Track>),
     TrackFetched(Track),
-    PlaylistFetched(Playlist, Vec<Track>),
+    PlaylistFetched(Playlist),
+    PlaylistTracksFetched(u32, Vec<Track>),
+    PlaylistTracksPageFetched(u32, Vec<Track>, usize),
     AlbumTracksFetched(Vec<Track>),
-    ArtistTracksFetched(Vec<Track>),
+    ArtistTracksFetched(Vec<Track>, Pager),
+    ArtistTracksPageFetched(String, Vec<Track>, Pager),
+    SearchPageFetched(Search, u32),
     PlaylistsFetched(Vec<Playlist>),
     PlaylistSelected(Playlist),
     PlaylistKindSelected(u32),

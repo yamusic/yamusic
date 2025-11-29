@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
-use yandex_music::model::{playlist::Playlist, track::Track};
+use yandex_music::model::{playlist::Playlist, playlist::PlaylistTracks, track::Track};
 
 use crate::{
     event::events::Event,
@@ -22,10 +22,15 @@ use crate::{
     util::colors,
 };
 
+const PAGE_SIZE: usize = 10;
+
 pub struct PlaylistDetail {
     pub playlist: Option<Playlist>,
     pub tracks: Vec<Track>,
     pub list_state: ListState,
+    pub all_track_ids: Vec<String>,
+    pub loaded_count: usize,
+    pub is_loading_more: bool,
 }
 
 impl PlaylistDetail {
@@ -34,6 +39,9 @@ impl PlaylistDetail {
             playlist: None,
             tracks: Vec::new(),
             list_state: ListState::default(),
+            all_track_ids: Vec::new(),
+            loaded_count: 0,
+            is_loading_more: false,
         }
     }
 
@@ -42,6 +50,9 @@ impl PlaylistDetail {
             playlist: Some(playlist),
             tracks: Vec::new(),
             list_state: ListState::default(),
+            all_track_ids: Vec::new(),
+            loaded_count: 0,
+            is_loading_more: false,
         }
     }
 
@@ -54,7 +65,107 @@ impl PlaylistDetail {
             playlist: Some(playlist),
             tracks,
             list_state,
+            all_track_ids: Vec::new(),
+            loaded_count: 0,
+            is_loading_more: false,
         }
+    }
+
+    fn extract_track_ids(playlist: &Playlist) -> Vec<String> {
+        match &playlist.tracks {
+            Some(PlaylistTracks::Full(tracks)) => tracks
+                .iter()
+                .map(|t| {
+                    if let Some(album_id) = t.albums.first().and_then(|a| a.id) {
+                        format!("{}:{}", t.id, album_id)
+                    } else {
+                        t.id.clone()
+                    }
+                })
+                .collect(),
+            Some(PlaylistTracks::WithInfo(tracks)) => tracks
+                .iter()
+                .map(|t| {
+                    if let Some(album_id) = t.track.albums.first().and_then(|a| a.id) {
+                        format!("{}:{}", t.track.id, album_id)
+                    } else {
+                        t.track.id.clone()
+                    }
+                })
+                .collect(),
+            Some(PlaylistTracks::Partial(partial)) => partial
+                .iter()
+                .map(|p| {
+                    if let Some(album_id) = p.album_id {
+                        format!("{}:{}", p.id, album_id)
+                    } else {
+                        p.id.clone()
+                    }
+                })
+                .collect(),
+            None => vec![],
+        }
+    }
+
+    fn has_more_tracks(&self) -> bool {
+        self.loaded_count < self.all_track_ids.len()
+    }
+
+    fn should_load_more(&self) -> bool {
+        if self.is_loading_more || !self.has_more_tracks() {
+            return false;
+        }
+
+        if let Some(selected) = self.list_state.selected() {
+            let len = self.tracks.len();
+            len > 0 && selected >= len.saturating_sub(2)
+        } else {
+            false
+        }
+    }
+
+    fn trigger_load_more(&mut self, ctx: &AppContext) {
+        if self.is_loading_more || !self.has_more_tracks() {
+            return;
+        }
+
+        let playlist_kind = match &self.playlist {
+            Some(p) => p.kind,
+            None => return,
+        };
+
+        let start = self.loaded_count;
+        let end = (start + PAGE_SIZE).min(self.all_track_ids.len());
+        let batch: Vec<String> = self.all_track_ids[start..end].to_vec();
+
+        if batch.is_empty() {
+            return;
+        }
+
+        self.is_loading_more = true;
+        let api = ctx.api.clone();
+        let tx = ctx.event_tx.clone();
+        let batch_end = end;
+
+        tokio::spawn(async move {
+            match api.fetch_tracks_by_ids(batch).await {
+                Ok(tracks) => {
+                    let tracks: Vec<_> = tracks
+                        .into_iter()
+                        .filter(|t| t.available.unwrap_or(false))
+                        .collect();
+                    let _ = tx.send(Event::PlaylistTracksPageFetched(
+                        playlist_kind,
+                        tracks,
+                        batch_end,
+                    ));
+                }
+                Err(e) => {
+                    tracing::info!("Failed to fetch tracks: {}", e);
+                    let _ = tx.send(Event::FetchError(e.to_string()));
+                }
+            }
+        });
     }
 }
 
@@ -71,18 +182,13 @@ impl View for PlaylistDetail {
 
         let playlist = self.playlist.as_ref().unwrap();
 
-        if self.tracks.is_empty() {
-            let spinner = Spinner::default()
-                .with_style(Style::default().fg(colors::PRIMARY))
-                .with_label(format!("Loading {}...", playlist.title));
-            f.render_widget(spinner, area);
-            return;
-        }
-
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(6), Constraint::Min(0)])
             .split(area);
+
+        let header_area = chunks[0];
+        let tracks_area = chunks[1];
 
         let title = playlist.title.clone();
         let owner = playlist.owner.name.clone().unwrap_or_default();
@@ -97,6 +203,21 @@ impl View for PlaylistDetail {
             duration_secs % 60
         );
 
+        let track_info = if self.has_more_tracks() {
+            format!(
+                "{}/{} tracks{}",
+                self.tracks.len(),
+                track_count,
+                if self.is_loading_more {
+                    " (loading...)"
+                } else {
+                    ""
+                }
+            )
+        } else {
+            format!("{} tracks", track_count)
+        };
+
         let header = Paragraph::new(vec![
             Line::from(Span::styled(
                 title,
@@ -106,8 +227,8 @@ impl View for PlaylistDetail {
             )),
             Line::from(format!("By {}", owner)),
             Line::from(format!(
-                "{} tracks • {} • {} likes",
-                track_count, duration_str, likes
+                "{} • {} • {} likes",
+                track_info, duration_str, likes
             )),
             Line::from(Span::styled(
                 description,
@@ -120,7 +241,20 @@ impl View for PlaylistDetail {
                 .padding(ratatui::widgets::Padding::new(1, 1, 0, 1)),
         );
 
-        f.render_widget(header, chunks[0]);
+        f.render_widget(header, header_area);
+
+        if self.tracks.is_empty() {
+            let label = if self.all_track_ids.is_empty() {
+                "Loading tracks...".to_string()
+            } else {
+                format!("Loading tracks (0/{})...", self.all_track_ids.len())
+            };
+            let spinner = Spinner::default()
+                .with_style(Style::default().fg(colors::PRIMARY))
+                .with_label(label);
+            f.render_widget(spinner, tracks_area);
+            return;
+        }
 
         let current_track_id = ctx.audio_system.current_track().map(|t| t.id);
         let is_playing = ctx.audio_system.is_playing();
@@ -174,7 +308,7 @@ impl View for PlaylistDetail {
             )
             .highlight_symbol("> ");
 
-        f.render_stateful_widget(list, chunks[1], &mut self.list_state);
+        f.render_stateful_widget(list, tracks_area, &mut self.list_state);
     }
 
     async fn handle_input(
@@ -192,6 +326,10 @@ impl View for PlaylistDetail {
                         .selected()
                         .map_or(0, |i| if i >= len - 1 { i } else { i + 1 });
                     self.list_state.select(Some(i));
+
+                    if self.should_load_more() {
+                        self.trigger_load_more(ctx);
+                    }
                 }
                 None
             }
@@ -202,6 +340,22 @@ impl View for PlaylistDetail {
                         .selected()
                         .map_or(0, |i| if i == 0 { 0 } else { i - 1 });
                     self.list_state.select(Some(i));
+                }
+                None
+            }
+            KeyCode::Char('g') => {
+                if len > 0 {
+                    self.list_state.select(Some(0));
+                }
+                None
+            }
+            KeyCode::Char('G') => {
+                if len > 0 {
+                    self.list_state.select(Some(len - 1));
+
+                    if self.should_load_more() {
+                        self.trigger_load_more(ctx);
+                    }
                 }
                 None
             }
@@ -260,18 +414,46 @@ impl View for PlaylistDetail {
         }
     }
 
-    async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
-        if let Event::PlaylistFetched(playlist, tracks) = event {
-            let should_accept = self.playlist.is_none()
-                || self.playlist.as_ref().map(|p| p.kind) == Some(playlist.kind);
+    async fn on_event(&mut self, event: &Event, ctx: &AppContext) {
+        match event {
+            Event::PlaylistFetched(playlist) => {
+                let should_accept = self.playlist.is_none()
+                    || self.playlist.as_ref().map(|p| p.kind) == Some(playlist.kind);
 
-            if should_accept {
-                self.playlist = Some(playlist.clone());
-                self.tracks = tracks.clone();
-                if !self.tracks.is_empty() && self.list_state.selected().is_none() {
-                    self.list_state.select(Some(0));
+                if should_accept {
+                    self.all_track_ids = Self::extract_track_ids(playlist);
+                    self.playlist = Some(playlist.clone());
+                    self.loaded_count = 0;
+                    self.is_loading_more = false;
                 }
             }
+            Event::PlaylistTracksFetched(playlist_kind, tracks) => {
+                if self.playlist.as_ref().map(|p| p.kind) == Some(*playlist_kind) {
+                    self.tracks = tracks.clone();
+                    self.loaded_count = PAGE_SIZE.min(self.all_track_ids.len());
+                    self.is_loading_more = false;
+
+                    if !self.tracks.is_empty() && self.list_state.selected().is_none() {
+                        self.list_state.select(Some(0));
+                    }
+                }
+            }
+            Event::PlaylistTracksPageFetched(playlist_kind, tracks, loaded_count) => {
+                if self.playlist.as_ref().map(|p| p.kind) == Some(*playlist_kind) {
+                    self.tracks.extend(tracks.clone());
+                    self.loaded_count = *loaded_count;
+                    self.is_loading_more = false;
+
+                    if self.list_state.selected().is_none() && !self.tracks.is_empty() {
+                        self.list_state.select(Some(0));
+                    }
+
+                    if self.should_load_more() {
+                        self.trigger_load_more(ctx);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

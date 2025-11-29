@@ -65,6 +65,8 @@ pub struct Search {
     last_request_id: Option<String>,
     search_results: Option<SearchModel>,
     is_loading: bool,
+    current_page: u32,
+    is_loading_more: bool,
 }
 
 impl Default for Search {
@@ -77,7 +79,143 @@ impl Default for Search {
             last_request_id: None,
             search_results: None,
             is_loading: false,
+            current_page: 0,
+            is_loading_more: false,
         }
+    }
+}
+
+impl Search {
+    fn get_current_list_len(&self) -> usize {
+        if let Some(results) = &self.search_results {
+            match self.active_tab {
+                SearchTab::Tracks => results
+                    .tracks
+                    .as_ref()
+                    .map(|t| t.results.len())
+                    .unwrap_or(0),
+                SearchTab::Albums => results
+                    .albums
+                    .as_ref()
+                    .map(|a| a.results.len())
+                    .unwrap_or(0),
+                SearchTab::Artists => results
+                    .artists
+                    .as_ref()
+                    .map(|a| a.results.len())
+                    .unwrap_or(0),
+                SearchTab::Playlists => results
+                    .playlists
+                    .as_ref()
+                    .map(|p| p.results.len())
+                    .unwrap_or(0),
+            }
+        } else {
+            0
+        }
+    }
+
+    fn has_more_results(&self) -> bool {
+        if let Some(results) = &self.search_results {
+            match self.active_tab {
+                SearchTab::Tracks => {
+                    if let Some(tracks) = &results.tracks {
+                        tracks.results.len() < tracks.total as usize
+                    } else {
+                        false
+                    }
+                }
+                SearchTab::Albums => {
+                    if let Some(albums) = &results.albums {
+                        albums.results.len() < albums.total as usize
+                    } else {
+                        false
+                    }
+                }
+                SearchTab::Artists => {
+                    if let Some(artists) = &results.artists {
+                        artists.results.len() < artists.total as usize
+                    } else {
+                        false
+                    }
+                }
+                SearchTab::Playlists => {
+                    if let Some(playlists) = &results.playlists {
+                        playlists.results.len() < playlists.total as usize
+                    } else {
+                        false
+                    }
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    fn should_load_more(&self) -> bool {
+        if self.is_loading_more || !self.has_more_results() {
+            return false;
+        }
+
+        if let Some(selected) = self.list_state.selected() {
+            let len = self.get_current_list_len();
+            len > 0 && selected >= len.saturating_sub(2)
+        } else {
+            false
+        }
+    }
+
+    fn trigger_load_more(&mut self, ctx: &AppContext) {
+        if self.is_loading_more || !self.has_more_results() || self.input.is_empty() {
+            return;
+        }
+
+        self.is_loading_more = true;
+        let next_page = self.current_page + 1;
+        let query = self.input.clone();
+        let api = ctx.api.clone();
+        let tx = ctx.event_tx.clone();
+
+        tokio::spawn(async move {
+            match api.search_paginated(&query, next_page).await {
+                Ok(results) => {
+                    let _ = tx.send(Event::SearchPageFetched(results, next_page));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::FetchError(e.to_string()));
+                }
+            }
+        });
+    }
+
+    fn merge_search_results(&mut self, new_results: SearchModel, page: u32) {
+        if let Some(existing) = &mut self.search_results {
+            if let (Some(existing_tracks), Some(new_tracks)) =
+                (&mut existing.tracks, new_results.tracks)
+            {
+                existing_tracks.results.extend(new_tracks.results);
+            }
+
+            if let (Some(existing_albums), Some(new_albums)) =
+                (&mut existing.albums, new_results.albums)
+            {
+                existing_albums.results.extend(new_albums.results);
+            }
+
+            if let (Some(existing_artists), Some(new_artists)) =
+                (&mut existing.artists, new_results.artists)
+            {
+                existing_artists.results.extend(new_artists.results);
+            }
+
+            if let (Some(existing_playlists), Some(new_playlists)) =
+                (&mut existing.playlists, new_results.playlists)
+            {
+                existing_playlists.results.extend(new_playlists.results);
+            }
+        }
+        self.current_page = page;
+        self.is_loading_more = false;
     }
 }
 
@@ -184,6 +322,16 @@ impl View for Search {
                             }
                             items.push(list_item);
                         }
+
+                        if self.is_loading_more {
+                            items.push(
+                                ListItem::new("  Loading more...".to_string()).style(
+                                    Style::default()
+                                        .fg(colors::NEUTRAL)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            );
+                        }
                     }
                 }
                 SearchTab::Albums => {
@@ -198,6 +346,16 @@ impl View for Search {
                             let content = format!("{} - {}", title, artist);
                             items.push(ListItem::new(format!("  {}", content)));
                         }
+
+                        if self.is_loading_more {
+                            items.push(
+                                ListItem::new("  Loading more...".to_string()).style(
+                                    Style::default()
+                                        .fg(colors::NEUTRAL)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            );
+                        }
                     }
                 }
                 SearchTab::Artists => {
@@ -206,6 +364,16 @@ impl View for Search {
                             let name = item.name.as_deref().unwrap_or("Unknown Artist");
                             items.push(ListItem::new(format!("  {}", name)));
                         }
+
+                        if self.is_loading_more {
+                            items.push(
+                                ListItem::new("  Loading more...".to_string()).style(
+                                    Style::default()
+                                        .fg(colors::NEUTRAL)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            );
+                        }
                     }
                 }
                 SearchTab::Playlists => {
@@ -213,6 +381,16 @@ impl View for Search {
                         for item in &playlists.results {
                             let title = item.title.clone();
                             items.push(ListItem::new(format!("  {}", title)));
+                        }
+
+                        if self.is_loading_more {
+                            items.push(
+                                ListItem::new("  Loading more...".to_string()).style(
+                                    Style::default()
+                                        .fg(colors::NEUTRAL)
+                                        .add_modifier(Modifier::ITALIC),
+                                ),
+                            );
                         }
                     }
                 }
@@ -245,6 +423,10 @@ impl View for Search {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => None,
                 KeyCode::Enter => {
                     if !self.input.is_empty() {
+                        self.current_page = 0;
+                        self.search_results = None;
+                        self.is_loading_more = false;
+
                         let _ = ctx
                             .event_tx
                             .send(crate::event::events::Event::Search(self.input.clone()));
@@ -268,6 +450,8 @@ impl View for Search {
                 _ => Some(Action::None),
             }
         } else {
+            let len = self.get_current_list_len();
+
             match key.code {
                 KeyCode::Char('/') => {
                     self.is_editing = true;
@@ -284,14 +468,39 @@ impl View for Search {
                     Some(Action::None)
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    let i = self.list_state.selected().unwrap_or(0);
-                    self.list_state.select(Some(i + 1));
+                    if len > 0 {
+                        let i = self
+                            .list_state
+                            .selected()
+                            .map_or(0, |i| if i >= len - 1 { i } else { i + 1 });
+                        self.list_state.select(Some(i));
+
+                        if self.should_load_more() {
+                            self.trigger_load_more(ctx);
+                        }
+                    }
                     Some(Action::None)
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     let i = self.list_state.selected().unwrap_or(0);
                     if i > 0 {
                         self.list_state.select(Some(i - 1));
+                    }
+                    Some(Action::None)
+                }
+                KeyCode::Char('g') => {
+                    if len > 0 {
+                        self.list_state.select(Some(0));
+                    }
+                    Some(Action::None)
+                }
+                KeyCode::Char('G') => {
+                    if len > 0 {
+                        self.list_state.select(Some(len - 1));
+
+                        if self.should_load_more() {
+                            self.trigger_load_more(ctx);
+                        }
                     }
                     Some(Action::None)
                 }
@@ -352,9 +561,21 @@ impl View for Search {
     }
 
     async fn on_event(&mut self, event: &Event, _ctx: &AppContext) {
-        if let Event::SearchResults(results) = event {
-            self.search_results = Some(results.clone());
-            self.is_loading = false;
+        match event {
+            Event::SearchResults(results) => {
+                self.search_results = Some(results.clone());
+                self.is_loading = false;
+                self.current_page = 0;
+                self.list_state.select(Some(0));
+            }
+            Event::SearchPageFetched(results, page) => {
+                self.merge_search_results(results.clone(), *page);
+
+                if self.should_load_more() {
+                    self.trigger_load_more(_ctx);
+                }
+            }
+            _ => {}
         }
     }
 }

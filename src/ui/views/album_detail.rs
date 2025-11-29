@@ -163,6 +163,18 @@ impl View for AlbumDetail {
                 }
                 None
             }
+            KeyCode::Char('g') => {
+                if len > 0 {
+                    self.list_state.select(Some(0));
+                }
+                None
+            }
+            KeyCode::Char('G') => {
+                if len > 0 {
+                    self.list_state.select(Some(len - 1));
+                }
+                None
+            }
             KeyCode::Enter => {
                 if let Some(i) = self.list_state.selected() {
                     let tracks_to_play = if i > 0 {

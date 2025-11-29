@@ -17,7 +17,44 @@ use crate::{
     },
 };
 
+const PLAYLIST_PAGE_SIZE: usize = 10;
+
 pub struct EventHandler;
+
+fn extract_track_ids(playlist_tracks: &PlaylistTracks) -> Vec<String> {
+    match playlist_tracks {
+        PlaylistTracks::Full(tracks) => tracks
+            .iter()
+            .map(|t| {
+                if let Some(album_id) = t.albums.first().and_then(|a| a.id) {
+                    format!("{}:{}", t.id, album_id)
+                } else {
+                    t.id.clone()
+                }
+            })
+            .collect(),
+        PlaylistTracks::WithInfo(tracks) => tracks
+            .iter()
+            .map(|t| {
+                if let Some(album_id) = t.track.albums.first().and_then(|a| a.id) {
+                    format!("{}:{}", t.track.id, album_id)
+                } else {
+                    t.track.id.clone()
+                }
+            })
+            .collect(),
+        PlaylistTracks::Partial(partial) => partial
+            .iter()
+            .map(|p| {
+                if let Some(album_id) = p.album_id {
+                    format!("{}:{}", p.id, album_id)
+                } else {
+                    p.id.clone()
+                }
+            })
+            .collect(),
+    }
+}
 
 impl EventHandler {
     pub async fn handle_events(app: &mut App, tui: &Tui) -> color_eyre::Result<bool> {
@@ -92,31 +129,38 @@ impl EventHandler {
                 app.task_manager.spawn(
                     "view_fetch",
                     tokio::spawn(async move {
-                        match api.fetch_playlist(playlist_kind).await {
+                        match api.fetch_playlist_bare(playlist_kind).await {
                             Ok(playlist) => {
-                                let tracks = match playlist.tracks.clone() {
-                                    Some(PlaylistTracks::Full(tracks)) => tracks,
-                                    Some(PlaylistTracks::WithInfo(tracks)) => {
-                                        tracks.into_iter().map(|t| t.track).collect()
-                                    }
-                                    Some(PlaylistTracks::Partial(partial_tracks)) => {
-                                        match api.fetch_tracks_partial(&partial_tracks).await {
-                                            Ok(tracks) => tracks,
-                                            Err(e) => {
-                                                info!("Failed to fetch partial tracks: {}", e);
-                                                vec![]
-                                            }
-                                        }
-                                    }
+                                let _ = tx.send(Event::PlaylistFetched(playlist.clone()));
+
+                                let track_ids = match &playlist.tracks {
+                                    Some(tracks) => extract_track_ids(tracks),
                                     None => vec![],
                                 };
 
-                                let tracks: Vec<_> = tracks
-                                    .into_iter()
-                                    .filter(|t| t.available.unwrap_or(false))
-                                    .collect();
+                                if track_ids.is_empty() {
+                                    return;
+                                }
 
-                                let _ = tx.send(Event::PlaylistFetched(playlist, tracks));
+                                let first_batch: Vec<_> =
+                                    track_ids.iter().take(PLAYLIST_PAGE_SIZE).cloned().collect();
+
+                                match api.fetch_tracks_by_ids(first_batch).await {
+                                    Ok(tracks) => {
+                                        let tracks: Vec<_> = tracks
+                                            .into_iter()
+                                            .filter(|t| t.available.unwrap_or(false))
+                                            .collect();
+                                        let _ = tx.send(Event::PlaylistTracksFetched(
+                                            playlist_kind,
+                                            tracks,
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        info!("Failed to fetch tracks: {}", e);
+                                        let _ = tx.send(Event::FetchError(e.to_string()));
+                                    }
+                                }
                             }
                             Err(e) => {
                                 let _ = tx.send(Event::FetchError(e.to_string()));
@@ -132,31 +176,35 @@ impl EventHandler {
                 app.task_manager.spawn(
                     "view_fetch",
                     tokio::spawn(async move {
-                        match api.fetch_playlist(kind).await {
+                        match api.fetch_playlist_bare(kind).await {
                             Ok(playlist) => {
-                                let tracks = match playlist.tracks.clone() {
-                                    Some(PlaylistTracks::Full(tracks)) => tracks,
-                                    Some(PlaylistTracks::WithInfo(tracks)) => {
-                                        tracks.into_iter().map(|t| t.track).collect()
-                                    }
-                                    Some(PlaylistTracks::Partial(partial_tracks)) => {
-                                        match api.fetch_tracks_partial(&partial_tracks).await {
-                                            Ok(tracks) => tracks,
-                                            Err(e) => {
-                                                info!("Failed to fetch partial tracks: {}", e);
-                                                vec![]
-                                            }
-                                        }
-                                    }
+                                let _ = tx.send(Event::PlaylistFetched(playlist.clone()));
+
+                                let track_ids = match &playlist.tracks {
+                                    Some(tracks) => extract_track_ids(tracks),
                                     None => vec![],
                                 };
 
-                                let tracks: Vec<_> = tracks
-                                    .into_iter()
-                                    .filter(|t| t.available.unwrap_or(false))
-                                    .collect();
+                                if track_ids.is_empty() {
+                                    return;
+                                }
 
-                                let _ = tx.send(Event::PlaylistFetched(playlist, tracks));
+                                let first_batch: Vec<_> =
+                                    track_ids.iter().take(PLAYLIST_PAGE_SIZE).cloned().collect();
+
+                                match api.fetch_tracks_by_ids(first_batch).await {
+                                    Ok(tracks) => {
+                                        let tracks: Vec<_> = tracks
+                                            .into_iter()
+                                            .filter(|t| t.available.unwrap_or(false))
+                                            .collect();
+                                        let _ = tx.send(Event::PlaylistTracksFetched(kind, tracks));
+                                    }
+                                    Err(e) => {
+                                        info!("Failed to fetch tracks: {}", e);
+                                        let _ = tx.send(Event::FetchError(e.to_string()));
+                                    }
+                                }
                             }
                             Err(e) => {
                                 let _ = tx.send(Event::FetchError(e.to_string()));
@@ -165,12 +213,8 @@ impl EventHandler {
                     }),
                 );
             }
-            Event::PlaylistFetched(playlist, tracks) => {
-                info!(
-                    "Playlist '{}' fetched: {} tracks",
-                    playlist.title,
-                    tracks.len()
-                );
+            Event::PlaylistFetched(playlist) => {
+                info!("Playlist '{}' fetched", playlist.title);
             }
             Event::AlbumSelected(album) => {
                 let state = AlbumDetail::new(album.clone());
@@ -207,9 +251,9 @@ impl EventHandler {
                 app.task_manager.spawn(
                     "view_fetch",
                     tokio::spawn(async move {
-                        match api.fetch_artist_tracks(artist_id).await {
-                            Ok(tracks) => {
-                                let _ = tx.send(Event::ArtistTracksFetched(tracks));
+                        match api.fetch_artist_tracks_paginated(artist_id, 0, 10).await {
+                            Ok((tracks, pager)) => {
+                                let _ = tx.send(Event::ArtistTracksFetched(tracks, pager));
                             }
                             Err(e) => {
                                 let _ = tx.send(Event::FetchError(e.to_string()));
