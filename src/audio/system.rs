@@ -122,7 +122,11 @@ impl AudioSystem {
     }
 
     pub async fn load_tracks(&mut self, tracks: Vec<Track>) {
-        if let Some(track) = self.queue.load(PlaybackContext::List, tracks, 0).await {
+        if let Some(track) = self
+            .queue
+            .load(PlaybackContext::Standalone, tracks, 0)
+            .await
+        {
             self.controller
                 .handle_command(AudioCommand::PlayTrack(track))
                 .await;
@@ -130,13 +134,13 @@ impl AudioSystem {
     }
 
     pub async fn play_single_track(&mut self, track: Track) {
-        if let Some(track) = self
+        if let Some(playing_track) = self
             .queue
-            .load(PlaybackContext::Track, vec![track], 0)
+            .load(PlaybackContext::Track(track.clone()), vec![track], 0)
             .await
         {
             self.controller
-                .handle_command(AudioCommand::PlayTrack(track))
+                .handle_command(AudioCommand::PlayTrack(playing_track))
                 .await;
         }
     }

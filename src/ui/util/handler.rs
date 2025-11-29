@@ -2,7 +2,6 @@ use crossterm::event::KeyCode;
 use ratatui::crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
 use tracing::info;
 use yandex_music::model::info::lyrics::LyricsFormat;
-use yandex_music::model::playlist::PlaylistTracks;
 
 use crate::{
     audio::queue::PlaybackContext,
@@ -15,46 +14,12 @@ use crate::{
         tui::{TerminalEvent, Tui},
         views::{AlbumDetail, ArtistDetail, PlaylistDetail, TrackDetail},
     },
+    util::track::extract_track_ids,
 };
 
 const PLAYLIST_PAGE_SIZE: usize = 10;
 
 pub struct EventHandler;
-
-fn extract_track_ids(playlist_tracks: &PlaylistTracks) -> Vec<String> {
-    match playlist_tracks {
-        PlaylistTracks::Full(tracks) => tracks
-            .iter()
-            .map(|t| {
-                if let Some(album_id) = t.albums.first().and_then(|a| a.id) {
-                    format!("{}:{}", t.id, album_id)
-                } else {
-                    t.id.clone()
-                }
-            })
-            .collect(),
-        PlaylistTracks::WithInfo(tracks) => tracks
-            .iter()
-            .map(|t| {
-                if let Some(album_id) = t.track.albums.first().and_then(|a| a.id) {
-                    format!("{}:{}", t.track.id, album_id)
-                } else {
-                    t.track.id.clone()
-                }
-            })
-            .collect(),
-        PlaylistTracks::Partial(partial) => partial
-            .iter()
-            .map(|p| {
-                if let Some(album_id) = p.album_id {
-                    format!("{}:{}", p.id, album_id)
-                } else {
-                    p.id.clone()
-                }
-            })
-            .collect(),
-    }
-}
 
 impl EventHandler {
     pub async fn handle_events(app: &mut App, tui: &Tui) -> color_eyre::Result<bool> {
@@ -115,7 +80,7 @@ impl EventHandler {
             Event::TrackFetched(track) => {
                 app.ctx
                     .audio_system
-                    .load_context(PlaybackContext::Track, vec![track], 0)
+                    .load_context(PlaybackContext::Track(track.clone()), vec![track], 0)
                     .await;
             }
             Event::PlaylistsFetched(_playlists) => {
@@ -375,10 +340,10 @@ impl EventHandler {
         match action {
             Action::Quit => app.should_quit = true,
             Action::PlayPause => app.ctx.audio_system.play_pause().await,
-            Action::PlayWave(session, tracks) => {
+            Action::PlayContext(context, tracks, start_index) => {
                 app.ctx
                     .audio_system
-                    .load_context(PlaybackContext::Wave(session), tracks, 0)
+                    .load_context(context, tracks, start_index)
                     .await;
             }
             _ => {}

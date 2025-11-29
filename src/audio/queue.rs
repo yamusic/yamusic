@@ -1,10 +1,13 @@
 use super::enums::RepeatMode;
 use crate::http::ApiService;
+use crate::util::track::extract_track_ids;
 use rand::{rng, seq::SliceRandom};
 use std::sync::Arc;
 use yandex_music::model::{
     album::Album, artist::Artist, playlist::Playlist, rotor::session::Session, track::Track,
 };
+
+const FETCH_BATCH_SIZE: usize = 10;
 
 pub struct QueueManager {
     pub api: Arc<ApiService>,
@@ -22,16 +25,23 @@ pub struct QueueManager {
 
     pub playback_context: PlaybackContext,
     pub wave_session: Option<Session>,
+
+    pub pending_track_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlaybackContext {
     Playlist(Playlist),
+
     Artist(Artist),
+
     Album(Album),
-    Track,
-    Unknown,
-    List,
+
+    Track(Track),
+
     Wave(Session),
+
+    Standalone,
 }
 
 impl QueueManager {
@@ -46,8 +56,9 @@ impl QueueManager {
             is_shuffled: false,
             history: Vec::new(),
             history_index: 0,
-            playback_context: PlaybackContext::Unknown,
+            playback_context: PlaybackContext::Standalone,
             wave_session: None,
+            pending_track_ids: Vec::new(),
         }
     }
 
@@ -68,12 +79,25 @@ impl QueueManager {
         self.history.clear();
         self.history_index = 0;
         self.wave_session = None;
+        self.pending_track_ids.clear();
 
         match self.playback_context {
-            PlaybackContext::Playlist(_)
-            | PlaybackContext::Artist(_)
-            | PlaybackContext::Album(_)
-            | PlaybackContext::List => {
+            PlaybackContext::Playlist(ref playlist) => {
+                let all_track_ids = playlist
+                    .tracks
+                    .as_ref()
+                    .map(extract_track_ids)
+                    .unwrap_or_default();
+
+                let loaded_count = (start_index + tracks.len()).min(all_track_ids.len());
+                self.pending_track_ids = all_track_ids.into_iter().skip(loaded_count).collect();
+
+                if start_index > 0 {
+                    tracks.drain(0..start_index);
+                }
+                self.queue = tracks;
+            }
+            PlaybackContext::Artist(_) | PlaybackContext::Album(_) => {
                 if start_index > 0 {
                     tracks.drain(0..start_index);
                 }
@@ -86,37 +110,45 @@ impl QueueManager {
                 self.queue = tracks;
                 self.wave_session = Some(session.clone());
             }
-            PlaybackContext::Track | PlaybackContext::Unknown => {
+            PlaybackContext::Track(ref seed_track) => {
                 self.queue.clear();
-                if start_index < tracks.len() {
-                    let track = tracks.swap_remove(start_index);
-                    let track_id = track.id.clone();
-                    self.queue.push(track.clone());
+                self.queue.push(seed_track.clone());
 
-                    if let PlaybackContext::Track = self.playback_context {
-                        if !track.track_source.as_ref().is_some_and(|s| s == "UGC") {
+                if !seed_track.track_source.as_ref().is_some_and(|s| s == "UGC") {
+                    let track_id = seed_track.id.clone();
+                    if let Some(album) = seed_track.albums.first() {
+                        if let Some(album_id) = album.id {
                             let session = self
                                 .api
                                 .create_session(vec![format!("track:{track_id}")])
                                 .await
-                                .unwrap();
+                                .ok();
 
-                            let album_id = track.albums[0].id.unwrap();
-                            let session_tracks = self
-                                .api
-                                .get_session_tracks(
-                                    session.batch_id.clone(),
-                                    vec![format!("{track_id}:{album_id}")],
-                                )
-                                .await
-                                .unwrap();
+                            if let Some(session) = session {
+                                let session_tracks = self
+                                    .api
+                                    .get_session_tracks(
+                                        session.batch_id.clone(),
+                                        vec![format!("{track_id}:{album_id}")],
+                                    )
+                                    .await
+                                    .ok();
 
-                            for sim_track in session_tracks.sequence {
-                                self.queue.push(sim_track.track);
+                                if let Some(session_tracks) = session_tracks {
+                                    for sim_track in session_tracks.sequence {
+                                        self.queue.push(sim_track.track);
+                                    }
+                                }
                             }
                         }
                     }
                 }
+            }
+            PlaybackContext::Standalone => {
+                if start_index > 0 {
+                    tracks.drain(0..start_index);
+                }
+                self.queue = tracks;
             }
         }
 
@@ -136,7 +168,7 @@ impl QueueManager {
         }
 
         if self.repeat_mode == RepeatMode::All
-            && let PlaybackContext::Unknown = self.playback_context
+            && let PlaybackContext::Standalone = self.playback_context
         {
             self.repeat_mode = RepeatMode::None;
             return None;
@@ -151,7 +183,17 @@ impl QueueManager {
         let next_track_index = self.current_track_index + 1;
 
         if next_track_index >= self.queue.len() {
-            if let PlaybackContext::Wave(ref mut session) = self.playback_context {
+            if !self.pending_track_ids.is_empty() {
+                if self.fetch_pending_tracks().await {
+                    if self.queue.len() > next_track_index {
+                        self.current_track_index = next_track_index;
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            } else if let PlaybackContext::Wave(ref mut session) = self.playback_context {
                 let session_id = session
                     .radio_session_id
                     .clone()
@@ -204,6 +246,35 @@ impl QueueManager {
         track
     }
 
+    async fn fetch_pending_tracks(&mut self) -> bool {
+        if self.pending_track_ids.is_empty() {
+            return false;
+        }
+
+        let batch_size = FETCH_BATCH_SIZE.min(self.pending_track_ids.len());
+        let batch: Vec<String> = self.pending_track_ids.drain(..batch_size).collect();
+
+        let api = self.api.clone();
+        match api.fetch_tracks_by_ids(batch).await {
+            Ok(new_tracks) => {
+                let new_tracks: Vec<Track> = new_tracks
+                    .into_iter()
+                    .filter(|t| t.available.unwrap_or(false))
+                    .collect();
+
+                if new_tracks.is_empty() {
+                    return false;
+                }
+
+                for track in new_tracks {
+                    self.queue.push(track);
+                }
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     pub fn get_previous_track(&mut self) -> Option<Track> {
         if self.history_index >= 2 {
             self.history_index -= 2;
@@ -221,7 +292,7 @@ impl QueueManager {
                         self.shuffled_index_map.push(None);
                     }
                     self.current_track_index = 0;
-                    self.playback_context = PlaybackContext::Unknown;
+                    self.playback_context = PlaybackContext::Standalone;
                 }
 
                 return Some(t);
@@ -252,8 +323,8 @@ impl QueueManager {
                 PlaybackContext::Album(_)
                 | PlaybackContext::Artist(_)
                 | PlaybackContext::Playlist(_)
-                | PlaybackContext::Track
-                | PlaybackContext::List => RepeatMode::All,
+                | PlaybackContext::Track(_)
+                | PlaybackContext::Standalone => RepeatMode::All,
                 _ => RepeatMode::None,
             },
             RepeatMode::All => RepeatMode::Single,
