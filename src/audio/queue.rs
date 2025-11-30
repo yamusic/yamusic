@@ -1,8 +1,11 @@
 use super::enums::RepeatMode;
+use crate::event::events::Event;
 use crate::http::ApiService;
 use crate::util::track::extract_track_ids;
+use flume::Sender;
 use rand::{rng, seq::SliceRandom};
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 use yandex_music::model::{
     album::Album, artist::Artist, playlist::Playlist, rotor::session::Session, track::Track,
 };
@@ -27,20 +30,18 @@ pub struct QueueManager {
     pub wave_session: Option<Session>,
 
     pub pending_track_ids: Vec<String>,
+
+    pub fetch_task: Option<JoinHandle<(Vec<Track>, Option<Session>)>>,
+    pub event_tx: Option<Sender<Event>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlaybackContext {
     Playlist(Playlist),
-
     Artist(Artist),
-
     Album(Album),
-
     Track(Track),
-
     Wave(Session),
-
     Standalone,
 }
 
@@ -59,7 +60,13 @@ impl QueueManager {
             playback_context: PlaybackContext::Standalone,
             wave_session: None,
             pending_track_ids: Vec::new(),
+            fetch_task: None,
+            event_tx: None,
         }
+    }
+
+    pub fn set_event_tx(&mut self, tx: Sender<Event>) {
+        self.event_tx = Some(tx);
     }
 
     pub async fn load(
@@ -70,6 +77,10 @@ impl QueueManager {
     ) -> Option<Track> {
         if tracks.is_empty() || start_index >= tracks.len() {
             return None;
+        }
+
+        if let Some(task) = self.fetch_task.take() {
+            task.abort();
         }
 
         self.playback_context = context;
@@ -180,47 +191,17 @@ impl QueueManager {
             return Some(track.clone());
         }
 
+        self.poll_fetch().await;
+
         let next_track_index = self.current_track_index + 1;
 
-        if next_track_index >= self.queue.len() {
-            if !self.pending_track_ids.is_empty() {
-                if self.fetch_pending_tracks().await {
-                    if self.queue.len() > next_track_index {
-                        self.current_track_index = next_track_index;
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            } else if let PlaybackContext::Wave(ref mut session) = self.playback_context {
-                let session_id = session
-                    .radio_session_id
-                    .clone()
-                    .unwrap_or(session.batch_id.clone());
-                let queue_history: Vec<String> = self
-                    .history
-                    .iter()
-                    .rev()
-                    .take(20)
-                    .map(|t| {
-                        format!(
-                            "{}:{}",
-                            t.id,
-                            t.albums
-                                .first()
-                                .and_then(|a| a.id.as_ref().map(|id| id.to_string()))
-                                .unwrap_or_default()
-                        )
-                    })
-                    .collect();
+        if self.queue.len() > next_track_index && self.queue.len() - next_track_index <= 2 {
+            self.trigger_fetch();
+        }
 
-                let api = self.api.clone();
-                if let Ok(new_session) = api.get_session_tracks(session_id, queue_history).await {
-                    *session = new_session.clone();
-                    for item in new_session.sequence {
-                        self.queue.push(item.track);
-                    }
+        if next_track_index >= self.queue.len() {
+            if self.fetch_task.is_some() {
+                if self.await_fetch().await {
                     if self.queue.len() > next_track_index {
                         self.current_track_index = next_track_index;
                     } else {
@@ -229,10 +210,19 @@ impl QueueManager {
                 } else {
                     return None;
                 }
-            } else if let RepeatMode::All = self.repeat_mode {
-                self.current_track_index = 0;
             } else {
-                return None;
+                self.trigger_fetch();
+                if self.await_fetch().await {
+                    if self.queue.len() > next_track_index {
+                        self.current_track_index = next_track_index;
+                    } else {
+                        return None;
+                    }
+                } else if let RepeatMode::All = self.repeat_mode {
+                    self.current_track_index = 0;
+                } else {
+                    return None;
+                }
             }
         } else {
             self.current_track_index = next_track_index;
@@ -246,33 +236,99 @@ impl QueueManager {
         track
     }
 
-    async fn fetch_pending_tracks(&mut self) -> bool {
-        if self.pending_track_ids.is_empty() {
-            return false;
+    fn trigger_fetch(&mut self) {
+        if self.fetch_task.is_some() {
+            return;
         }
-
-        let batch_size = FETCH_BATCH_SIZE.min(self.pending_track_ids.len());
-        let batch: Vec<String> = self.pending_track_ids.drain(..batch_size).collect();
 
         let api = self.api.clone();
-        match api.fetch_tracks_by_ids(batch).await {
-            Ok(new_tracks) => {
-                let new_tracks: Vec<Track> = new_tracks
-                    .into_iter()
-                    .filter(|t| t.available.unwrap_or(false))
-                    .collect();
+        let event_tx = self.event_tx.clone();
 
-                if new_tracks.is_empty() {
-                    return false;
-                }
+        if !self.pending_track_ids.is_empty() {
+            let batch_size = FETCH_BATCH_SIZE.min(self.pending_track_ids.len());
+            let batch: Vec<String> = self.pending_track_ids.drain(..batch_size).collect();
 
-                for track in new_tracks {
-                    self.queue.push(track);
+            self.fetch_task = Some(tokio::spawn(async move {
+                match api.fetch_tracks_by_ids(batch).await {
+                    Ok(new_tracks) => {
+                        let new_tracks: Vec<Track> = new_tracks
+                            .into_iter()
+                            .filter(|t| t.available.unwrap_or(false))
+                            .collect();
+
+                        if let Some(tx) = event_tx {
+                            let _ = tx.send(Event::QueueUpdated);
+                        }
+                        (new_tracks, None)
+                    }
+                    Err(_) => (vec![], None),
                 }
-                true
-            }
-            Err(_) => false,
+            }));
+        } else if let PlaybackContext::Wave(ref session) = self.playback_context {
+            let session_id = session
+                .radio_session_id
+                .clone()
+                .unwrap_or(session.batch_id.clone());
+            let queue_history: Vec<String> = self
+                .history
+                .iter()
+                .rev()
+                .take(20)
+                .map(|t| {
+                    format!(
+                        "{}:{}",
+                        t.id,
+                        t.albums
+                            .first()
+                            .and_then(|a| a.id.as_ref().map(|id| id.to_string()))
+                            .unwrap_or_default()
+                    )
+                })
+                .collect();
+
+            self.fetch_task = Some(tokio::spawn(async move {
+                if let Ok(new_session) = api.get_session_tracks(session_id, queue_history).await {
+                    let tracks: Vec<Track> = new_session
+                        .sequence
+                        .iter()
+                        .map(|item| item.track.clone())
+                        .collect();
+                    if let Some(tx) = event_tx {
+                        let _ = tx.send(Event::QueueUpdated);
+                    }
+                    (tracks, Some(new_session))
+                } else {
+                    (vec![], None)
+                }
+            }));
         }
+    }
+
+    pub async fn poll_fetch(&mut self) {
+        if let Some(task) = &self.fetch_task {
+            if task.is_finished() {
+                self.await_fetch().await;
+            }
+        }
+    }
+
+    async fn await_fetch(&mut self) -> bool {
+        if let Some(task) = self.fetch_task.take() {
+            if let Ok((tracks, session)) = task.await {
+                if !tracks.is_empty() {
+                    self.queue.extend(tracks);
+                    if let Some(s) = session {
+                        if let PlaybackContext::Wave(ref mut current_session) =
+                            self.playback_context
+                        {
+                            *current_session = s;
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn get_previous_track(&mut self) -> Option<Track> {
@@ -389,6 +445,8 @@ impl QueueManager {
     }
 
     pub async fn play_track_at_index(&mut self, index: usize) -> Option<Track> {
+        self.poll_fetch().await;
+
         if index >= self.queue.len() {
             return None;
         }
@@ -404,6 +462,12 @@ impl QueueManager {
             self.current_track_index += 1;
         } else {
             self.current_track_index = index;
+        }
+
+        if self.queue.len() > self.current_track_index
+            && self.queue.len() - self.current_track_index <= 2
+        {
+            self.trigger_fetch();
         }
 
         let track = self.queue.get(self.current_track_index).cloned();
