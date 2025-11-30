@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use yandex_music::model::{
     album::Album, artist::Artist, info::pager::Pager, playlist::Playlist, rotor::session::Session,
     search::Search, track::Track,
@@ -49,18 +47,4 @@ pub enum Event {
     SeekForward(u32),
     SeekBackward(u32),
     ToggleMute,
-}
-
-pub enum ControlSignal {
-    Stop,
-    Seek(u64),
-    SeekForward(u64),
-    SeekBackward(u64),
-}
-
-pub enum PlayerCommand {
-    Play,
-    Pause,
-    Volume(f32),
-    Seek(Duration),
 }

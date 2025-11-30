@@ -13,15 +13,13 @@ use crate::{
 };
 use flume::Sender;
 use std::sync::Arc;
-use yandex_music::model::{
-    playlist::{Playlist, PlaylistTracks},
-    track::Track,
-};
+use yandex_music::model::track::Track;
 
 pub struct AudioSystem {
     controller: AudioController,
     queue: QueueManager,
     event_tx: Sender<Event>,
+    #[allow(dead_code)]
     api: Arc<ApiService>,
 }
 
@@ -39,72 +37,6 @@ impl AudioSystem {
             event_tx,
             api,
         })
-    }
-
-    pub async fn init(&mut self) -> color_eyre::Result<()> {
-        let playlist = self.api.fetch_liked_tracks().await?;
-        let tracks = match &playlist.tracks {
-            Some(PlaylistTracks::Full(tracks)) => tracks.clone(),
-            Some(PlaylistTracks::WithInfo(tracks)) => {
-                tracks.iter().map(|t| t.track.clone()).collect()
-            }
-            Some(PlaylistTracks::Partial(tracks)) => {
-                let track_ids: Vec<String> = tracks
-                    .iter()
-                    .map(|p| {
-                        if let Some(album_id) = p.album_id {
-                            format!("{}:{}", p.id, album_id)
-                        } else {
-                            p.id.clone()
-                        }
-                    })
-                    .collect();
-                self.api.fetch_tracks_by_ids(track_ids).await?
-            }
-            None => vec![],
-        };
-        let context = PlaybackContext::Playlist(playlist);
-
-        if !tracks.is_empty() {
-            self.queue.load(context, tracks, 0).await;
-        }
-
-        Ok(())
-    }
-
-    pub async fn play_playlist(&mut self, playlist: Playlist) -> color_eyre::Result<()> {
-        let tracks = match &playlist.tracks {
-            Some(PlaylistTracks::Full(tracks)) => tracks.clone(),
-            Some(PlaylistTracks::WithInfo(tracks)) => {
-                tracks.iter().map(|t| t.track.clone()).collect()
-            }
-            Some(PlaylistTracks::Partial(tracks)) => {
-                let track_ids: Vec<String> = tracks
-                    .iter()
-                    .map(|p| {
-                        if let Some(album_id) = p.album_id {
-                            format!("{}:{}", p.id, album_id)
-                        } else {
-                            p.id.clone()
-                        }
-                    })
-                    .collect();
-                self.api.fetch_tracks_by_ids(track_ids).await?
-            }
-            None => vec![],
-        };
-
-        if let Some(track) = self
-            .queue
-            .load(PlaybackContext::Playlist(playlist), tracks, 0)
-            .await
-        {
-            self.controller
-                .handle_command(AudioCommand::PlayTrack(track))
-                .await;
-        }
-
-        Ok(())
     }
 
     pub async fn load_context(
