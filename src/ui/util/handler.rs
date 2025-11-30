@@ -301,6 +301,9 @@ impl EventHandler {
                     .load_context(PlaybackContext::Wave(session), tracks, 0)
                     .await;
             }
+            Event::QueueUpdated => {
+                app.ctx.audio_system.sync_queue().await;
+            }
             _ => {}
         }
     }

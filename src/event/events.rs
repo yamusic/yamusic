@@ -33,6 +33,7 @@ pub enum Event {
     SearchResults(Search),
     FetchError(String),
     WaveReady(Session, Vec<Track>),
+    QueueUpdated,
 
     // Commands
     Play(i32),

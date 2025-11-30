@@ -30,7 +30,8 @@ impl AudioSystem {
         let engine = PlaybackEngine::new()?;
         let stream_manager = StreamManager::new(api.clone());
         let controller = AudioController::new(engine, stream_manager, event_tx.clone());
-        let queue = QueueManager::new(api.clone());
+        let mut queue = QueueManager::new(api.clone());
+        queue.set_event_tx(event_tx.clone());
 
         Ok(Self {
             controller,
@@ -290,5 +291,9 @@ impl AudioSystem {
 
     pub fn current_amplitude(&self) -> f32 {
         self.controller.current_amplitude()
+    }
+
+    pub async fn sync_queue(&mut self) {
+        self.queue.poll_fetch().await;
     }
 }
