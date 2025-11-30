@@ -11,12 +11,3 @@ pub enum AudioCommand {
     SetVolume(f32),
     LoadTrack(Track),
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AudioEvent {
-    TrackStarted(String),
-    TrackEnded(String),
-    PlaybackError(String),
-    PositionUpdated(Duration),
-    VolumeChanged(f32),
-}

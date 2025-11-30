@@ -83,9 +83,6 @@ impl EventHandler {
                     .load_context(PlaybackContext::Track(track.clone()), vec![track], 0)
                     .await;
             }
-            Event::PlaylistsFetched(_playlists) => {
-                // app.state.data.playlists = playlists;
-            }
             Event::PlaylistSelected(playlist) => {
                 let state = PlaylistDetail::new(playlist.clone());
                 app.router.push(Box::new(state));
@@ -253,9 +250,6 @@ impl EventHandler {
                         }
                     }),
                 );
-            }
-            Event::SearchResults(_results) => {
-                // app.state.data.search_results = Some(results);
             }
             Event::FetchError(_e) => {}
             Event::TrackStarted(_track, _index) => {
