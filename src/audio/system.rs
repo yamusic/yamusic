@@ -23,12 +23,15 @@ pub struct AudioSystem {
     api: Arc<ApiService>,
 }
 
+use crate::audio::cache::UrlCache;
+
 impl AudioSystem {
     pub async fn new(event_tx: Sender<Event>, api: Arc<ApiService>) -> color_eyre::Result<Self> {
         let engine = PlaybackEngine::new()?;
-        let stream_manager = StreamManager::new(api.clone());
+        let url_cache = UrlCache::new();
+        let stream_manager = StreamManager::new(api.clone(), url_cache.clone());
         let controller = AudioController::new(engine, stream_manager, event_tx.clone());
-        let mut queue = QueueManager::new(api.clone());
+        let mut queue = QueueManager::new(api.clone(), url_cache);
         queue.set_event_tx(event_tx.clone());
 
         Ok(Self {
