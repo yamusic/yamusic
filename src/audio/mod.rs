@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod commands;
 pub mod controller;
 pub mod enums;

@@ -12,8 +12,9 @@ use yandex_music::{
         },
         search::get_search::SearchOptions,
         track::{
-            get_file_info::GetFileInfoOptions, get_lyrics::GetLyricsOptions,
-            get_similar_tracks::GetSimilarTracksOptions, get_tracks::GetTracksOptions,
+            get_file_info::GetFileInfoOptions, get_file_info_batch::GetFileInfoBatchOptions,
+            get_lyrics::GetLyricsOptions, get_similar_tracks::GetSimilarTracksOptions,
+            get_tracks::GetTracksOptions,
         },
     },
     model::{
@@ -160,6 +161,22 @@ impl ApiService {
         let info = self.client.get_file_info(&opts).await?;
 
         Ok((info.url, info.codec, info.bitrate))
+    }
+
+    pub async fn fetch_track_urls_batch(
+        &self,
+        track_ids: Vec<String>,
+    ) -> color_eyre::Result<Vec<(String, String, String, u32)>> {
+        let opts = GetFileInfoBatchOptions::new(track_ids.clone()).codecs(vec![Codec::FlacMp4]);
+        let results = self.client.get_file_info_batch(&opts).await?;
+
+        let mut mapped = Vec::new();
+        for (i, info) in results.into_iter().enumerate() {
+            if let Some(track_id) = track_ids.get(i) {
+                mapped.push((track_id.clone(), info.url, info.codec, info.bitrate));
+            }
+        }
+        Ok(mapped)
     }
 
     pub async fn fetch_lyrics(

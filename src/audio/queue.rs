@@ -1,4 +1,5 @@
 use super::enums::RepeatMode;
+use crate::audio::cache::UrlCache;
 use crate::event::events::Event;
 use crate::http::ApiService;
 use crate::util::track::extract_track_ids;
@@ -14,6 +15,7 @@ const FETCH_BATCH_SIZE: usize = 10;
 
 pub struct QueueManager {
     pub api: Arc<ApiService>,
+    pub url_cache: UrlCache,
 
     pub queue: Vec<Track>,
     pub original_queue: Option<Vec<Track>>,
@@ -29,9 +31,11 @@ pub struct QueueManager {
     pub playback_context: PlaybackContext,
     pub wave_session: Option<Session>,
 
+    pub current_prefetch_ids: Vec<String>,
     pub pending_track_ids: Vec<String>,
 
     pub fetch_task: Option<JoinHandle<(Vec<Track>, Option<Session>)>>,
+    pub prefetch_task: Option<JoinHandle<()>>,
     pub event_tx: Option<Sender<Event>>,
 }
 
@@ -46,9 +50,10 @@ pub enum PlaybackContext {
 }
 
 impl QueueManager {
-    pub fn new(api: Arc<ApiService>) -> Self {
+    pub fn new(api: Arc<ApiService>, url_cache: UrlCache) -> Self {
         Self {
             api,
+            url_cache,
             queue: Vec::new(),
             original_queue: None,
             shuffled_index_map: Vec::new(),
@@ -59,8 +64,11 @@ impl QueueManager {
             history_index: 0,
             playback_context: PlaybackContext::Standalone,
             wave_session: None,
+
+            current_prefetch_ids: Vec::new(),
             pending_track_ids: Vec::new(),
             fetch_task: None,
+            prefetch_task: None,
             event_tx: None,
         }
     }
@@ -82,6 +90,9 @@ impl QueueManager {
         if let Some(task) = self.fetch_task.take() {
             task.abort();
         }
+        if let Some(task) = self.prefetch_task.take() {
+            task.abort();
+        }
 
         self.playback_context = context;
         self.original_queue = None;
@@ -91,6 +102,11 @@ impl QueueManager {
         self.history_index = 0;
         self.wave_session = None;
         self.pending_track_ids.clear();
+
+        if let Some(task) = self.prefetch_task.take() {
+            task.abort();
+        }
+        self.current_prefetch_ids.clear();
 
         match self.playback_context {
             PlaybackContext::Playlist(ref playlist) => {
@@ -169,6 +185,14 @@ impl QueueManager {
             {
                 self.add_to_history(t.clone());
             }
+
+            if self.url_cache.get(&t.id).is_none() {
+                if let Ok((url, codec, bitrate)) = self.api.fetch_track_url(t.id.clone()).await {
+                    self.url_cache.insert(t.id.clone(), url, codec, bitrate);
+                }
+            }
+
+            self.prefetch_next_tracks();
         }
         track
     }
@@ -232,7 +256,12 @@ impl QueueManager {
 
         if let Some(t) = &track {
             self.add_to_history(t.clone());
+
+            self.prefetch_next_tracks();
+
+            self.ensure_url_cached(t).await;
         }
+
         track
     }
 
@@ -248,6 +277,7 @@ impl QueueManager {
             let batch_size = FETCH_BATCH_SIZE.min(self.pending_track_ids.len());
             let batch: Vec<String> = self.pending_track_ids.drain(..batch_size).collect();
 
+            let url_cache = self.url_cache.clone();
             self.fetch_task = Some(tokio::spawn(async move {
                 match api.fetch_tracks_by_ids(batch).await {
                     Ok(new_tracks) => {
@@ -255,6 +285,16 @@ impl QueueManager {
                             .into_iter()
                             .filter(|t| t.available.unwrap_or(false))
                             .collect();
+
+                        let track_ids: Vec<String> =
+                            new_tracks.iter().map(|t| t.id.clone()).collect();
+                        if !track_ids.is_empty() {
+                            if let Ok(urls) = api.fetch_track_urls_batch(track_ids).await {
+                                for (id, url, codec, bitrate) in urls {
+                                    url_cache.insert(id, url, codec, bitrate);
+                                }
+                            }
+                        }
 
                         if let Some(tx) = event_tx {
                             let _ = tx.send(Event::QueueUpdated);
@@ -286,6 +326,7 @@ impl QueueManager {
                 })
                 .collect();
 
+            let url_cache = self.url_cache.clone();
             self.fetch_task = Some(tokio::spawn(async move {
                 if let Ok(new_session) = api.get_session_tracks(session_id, queue_history).await {
                     let tracks: Vec<Track> = new_session
@@ -293,6 +334,16 @@ impl QueueManager {
                         .iter()
                         .map(|item| item.track.clone())
                         .collect();
+
+                    let track_ids: Vec<String> = tracks.iter().map(|t| t.id.clone()).collect();
+                    if !track_ids.is_empty() {
+                        if let Ok(urls) = api.fetch_track_urls_batch(track_ids).await {
+                            for (id, url, codec, bitrate) in urls {
+                                url_cache.insert(id, url, codec, bitrate);
+                            }
+                        }
+                    }
+
                     if let Some(tx) = event_tx {
                         let _ = tx.send(Event::QueueUpdated);
                     }
@@ -473,8 +524,63 @@ impl QueueManager {
         let track = self.queue.get(self.current_track_index).cloned();
         if let Some(t) = &track {
             self.add_to_history(t.clone());
+
+            self.prefetch_next_tracks();
+
+            self.ensure_url_cached(t).await;
         }
 
         track
+    }
+
+    fn prefetch_next_tracks(&mut self) {
+        let start = self.current_track_index + 1;
+        let end = (start + 5).min(self.queue.len());
+        if start >= end {
+            return;
+        }
+
+        let tracks_to_fetch: Vec<String> = self.queue[start..end]
+            .iter()
+            .map(|t| t.id.clone())
+            .filter(|id| self.url_cache.get(id).is_none())
+            .collect();
+
+        if tracks_to_fetch.is_empty() {
+            return;
+        }
+
+        if self.prefetch_task.is_some() {
+            if let Some(first_needed) = tracks_to_fetch.first() {
+                if self.current_prefetch_ids.contains(first_needed) {
+                    return;
+                }
+            }
+            if let Some(task) = self.prefetch_task.take() {
+                task.abort();
+            }
+        }
+
+        let api = self.api.clone();
+        let url_cache = self.url_cache.clone();
+        let batch_ids = tracks_to_fetch.clone();
+
+        self.current_prefetch_ids = tracks_to_fetch;
+
+        self.prefetch_task = Some(tokio::spawn(async move {
+            if let Ok(urls) = api.fetch_track_urls_batch(batch_ids).await {
+                for (id, url, codec, bitrate) in urls {
+                    url_cache.insert(id, url, codec, bitrate);
+                }
+            }
+        }));
+    }
+
+    async fn ensure_url_cached(&self, track: &Track) {
+        if self.url_cache.get(&track.id).is_none() {
+            if let Ok((url, codec, bitrate)) = self.api.fetch_track_url(track.id.clone()).await {
+                self.url_cache.insert(track.id.clone(), url, codec, bitrate);
+            }
+        }
     }
 }
