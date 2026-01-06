@@ -194,14 +194,17 @@ impl App {
         let mut tui = tui::Tui::new()?.mouse(true);
         tui.enter()?;
 
-        EventHandler::handle_event(self, TerminalEvent::Init).await?;
+        EventHandler::handle_event(self, TerminalEvent::Init, &mut tui).await?;
 
         tui.draw(|f| {
             self.ui(f);
         })?;
 
         while !self.should_quit {
-            if EventHandler::handle_events(self, &tui).await? {
+            if EventHandler::handle_events(self, &mut tui).await? {
+                if !self.has_focus {
+                    continue;
+                }
                 tui.draw(|f| {
                     self.ui(f);
                 })?;

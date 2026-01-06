@@ -22,10 +22,10 @@ const PLAYLIST_PAGE_SIZE: usize = 10;
 pub struct EventHandler;
 
 impl EventHandler {
-    pub async fn handle_events(app: &mut App, tui: &Tui) -> color_eyre::Result<bool> {
+    pub async fn handle_events(app: &mut App, tui: &mut Tui) -> color_eyre::Result<bool> {
         let mut should_render = false;
         if let Some(evt) = tui.next().await {
-            if Self::handle_event(app, evt).await? {
+            if Self::handle_event(app, evt, tui).await? {
                 should_render = true;
             }
         }
@@ -38,16 +38,23 @@ impl EventHandler {
         Ok(should_render)
     }
 
-    pub async fn handle_event(app: &mut App, evt: TerminalEvent) -> color_eyre::Result<bool> {
+    pub async fn handle_event(
+        app: &mut App,
+        evt: TerminalEvent,
+        tui: &mut Tui,
+    ) -> color_eyre::Result<bool> {
         match evt {
             TerminalEvent::Init => {}
             TerminalEvent::Quit => app.should_quit = true,
-            TerminalEvent::FocusGained => app.has_focus = true,
+            TerminalEvent::FocusGained => {
+                app.has_focus = true;
+                tui.clear()?;
+            }
             TerminalEvent::FocusLost => app.has_focus = false,
             TerminalEvent::Key(key) => Self::handle_key_event(app, key).await,
             TerminalEvent::Mouse(mouse) => Self::handle_mouse_event(app, mouse).await,
             TerminalEvent::Tick => {
-                return Ok(true);
+                return Ok(app.has_focus);
             }
             _ => {}
         }

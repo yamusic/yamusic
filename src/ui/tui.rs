@@ -11,8 +11,9 @@ use futures::{FutureExt, StreamExt};
 use ratatui::crossterm::{
     cursor,
     event::{
-        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent,
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture, Event as CrosstermEvent, KeyEvent, KeyEventKind,
+        MouseEvent,
     },
     terminal::{EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -118,6 +119,7 @@ impl Tui {
         if self.paste {
             crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
         }
+        crossterm::execute!(std::io::stdout(), EnableFocusChange)?;
         self.start();
         Ok(())
     }
@@ -131,6 +133,7 @@ impl Tui {
             if self.mouse {
                 crossterm::execute!(std::io::stdout(), DisableMouseCapture)?;
             }
+            crossterm::execute!(std::io::stdout(), DisableFocusChange)?;
             Self::restore()?;
         }
         Ok(())
