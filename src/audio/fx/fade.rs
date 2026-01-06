@@ -8,6 +8,8 @@ pub struct Fade {
     fade_in_end: f32,
     fade_out_start: f32,
     fade_out_end: f32,
+    inv_fade_in_duration: f32,
+    inv_fade_out_duration: f32,
     current_sample: f32,
 }
 
@@ -21,13 +23,29 @@ impl Fade {
         channels: u16,
     ) -> Self {
         let to_samples = |t: f32| -> f32 { t * sample_rate as f32 * channels as f32 };
+        let fade_in_start = to_samples(in_start);
+        let fade_in_end = to_samples(in_stop);
+        let fade_out_start = to_samples(out_start);
+        let fade_out_end = to_samples(out_stop);
+        let fade_in_duration = fade_in_end - fade_in_start;
+        let fade_out_duration = fade_out_end - fade_out_start;
         Self {
             sample_rate,
             channels,
-            fade_in_start: to_samples(in_start),
-            fade_in_end: to_samples(in_stop),
-            fade_out_start: to_samples(out_start),
-            fade_out_end: to_samples(out_stop),
+            fade_in_start,
+            fade_in_end,
+            fade_out_start,
+            fade_out_end,
+            inv_fade_in_duration: if fade_in_duration > 0.0 {
+                1.0 / fade_in_duration
+            } else {
+                0.0
+            },
+            inv_fade_out_duration: if fade_out_duration > 0.0 {
+                1.0 / fade_out_duration
+            } else {
+                0.0
+            },
             current_sample: 0.0,
         }
     }
@@ -38,26 +56,22 @@ impl Fx for Fade {
         let pos = self.current_sample;
         self.current_sample += 1.0;
 
-        let mut gain = 1.0;
+        if pos >= self.fade_in_end && pos < self.fade_out_start {
+            return sample;
+        }
 
-        if pos < self.fade_in_start {
-            gain *= 0.0;
-        } else if pos < self.fade_in_end {
-            let duration = self.fade_in_end - self.fade_in_start;
-            if duration > 0.0 {
-                gain *= (pos - self.fade_in_start) / duration;
+        if pos < self.fade_in_end {
+            if pos < self.fade_in_start {
+                return 0.0;
             }
+            let gain = (pos - self.fade_in_start) * self.inv_fade_in_duration;
+            return sample * gain;
         }
 
         if pos >= self.fade_out_end {
-            gain *= 0.0;
-        } else if pos >= self.fade_out_start {
-            let duration = self.fade_out_end - self.fade_out_start;
-            if duration > 0.0 {
-                gain *= 1.0 - (pos - self.fade_out_start) / duration;
-            }
+            return 0.0;
         }
-
+        let gain = 1.0 - (pos - self.fade_out_start) * self.inv_fade_out_duration;
         sample * gain
     }
 

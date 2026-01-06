@@ -5,7 +5,6 @@ use crossbeam_channel::{
 };
 use flume::{Receiver, Sender};
 use rodio::{Decoder, Source};
-use std::collections::VecDeque;
 use std::num::NonZero;
 use std::sync::{
     Arc,
@@ -53,7 +52,8 @@ impl StreamController {
 
 pub struct BufferedStreamingSource {
     rx: CbReceiver<SampleMessage>,
-    pending_samples: VecDeque<f32>,
+    pending_samples: Vec<f32>,
+    sample_pos: usize,
     pending_generation: u64,
     generation: Arc<AtomicU64>,
     sample_rate: u32,
@@ -75,7 +75,8 @@ impl BufferedStreamingSource {
         let pending_generation = generation.load(Ordering::SeqCst);
         Self {
             rx,
-            pending_samples: VecDeque::new(),
+            pending_samples: Vec::new(),
+            sample_pos: 0,
             pending_generation,
             generation,
             sample_rate,
@@ -91,14 +92,17 @@ impl Iterator for BufferedStreamingSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        let current_generation = self.generation.load(Ordering::SeqCst);
+        let current_generation = self.generation.load(Ordering::Acquire);
         if self.pending_generation != current_generation {
             self.pending_generation = current_generation;
             self.pending_samples.clear();
+            self.sample_pos = 0;
             self.finished_generation = None;
         }
 
-        if let Some(sample) = self.pending_samples.pop_front() {
+        if self.sample_pos < self.pending_samples.len() {
+            let sample = self.pending_samples[self.sample_pos];
+            self.sample_pos += 1;
             return Some(sample);
         }
 
@@ -108,15 +112,18 @@ impl Iterator for BufferedStreamingSource {
                     if packet_generation != current_generation {
                         continue;
                     }
-                    self.pending_samples = chunk.into();
-                    if let Some(sample) = self.pending_samples.pop_front() {
+                    self.pending_samples = chunk;
+                    self.sample_pos = 0;
+                    if self.sample_pos < self.pending_samples.len() {
+                        let sample = self.pending_samples[self.sample_pos];
+                        self.sample_pos += 1;
                         return Some(sample);
                     }
                 }
                 Ok(SampleMessage::Finished(packet_generation)) => {
                     if packet_generation == current_generation {
                         self.finished_generation = Some(packet_generation);
-                        if self.pending_samples.is_empty() {
+                        if self.sample_pos >= self.pending_samples.len() {
                             return None;
                         }
                     }
@@ -152,6 +159,7 @@ impl Source for BufferedStreamingSource {
 
     fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
         self.pending_samples.clear();
+        self.sample_pos = 0;
         self.finished_generation = None;
         self.controller.seek(pos);
         Ok(())
@@ -234,8 +242,9 @@ fn run_decode_loop(
     progress: Arc<TrackProgress>,
     progress_generation: u64,
 ) {
-    let mut active_generation = generation.load(Ordering::SeqCst);
+    let mut active_generation = generation.load(Ordering::Acquire);
     let mut stopped = false;
+    let mut chunk = Vec::with_capacity(PCM_CHUNK_SAMPLES);
 
     loop {
         while let Ok(cmd) = cmd_rx.try_recv() {
@@ -261,7 +270,7 @@ fn run_decode_loop(
             break;
         }
 
-        let mut chunk = Vec::with_capacity(PCM_CHUNK_SAMPLES);
+        chunk.clear();
         for _ in 0..PCM_CHUNK_SAMPLES {
             match decoder.next() {
                 Some(sample) => chunk.push(sample),
@@ -274,8 +283,9 @@ fn run_decode_loop(
             break;
         }
 
+        let send_chunk = std::mem::replace(&mut chunk, Vec::with_capacity(PCM_CHUNK_SAMPLES));
         if sample_tx
-            .send(SampleMessage::Samples(chunk, active_generation))
+            .send(SampleMessage::Samples(send_chunk, active_generation))
             .is_err()
         {
             break;

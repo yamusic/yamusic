@@ -90,9 +90,10 @@ impl BufferState {
             }
         }
 
-        while self.data.len() + new.len() > BUFFER_SIZE {
-            self.data.pop_front();
-            self.start_pos += 1;
+        let overflow = (self.data.len() + new.len()).saturating_sub(BUFFER_SIZE);
+        if overflow > 0 {
+            self.data.drain(..overflow);
+            self.start_pos += overflow as u64;
         }
 
         if start + new.len() as u64 >= self.total_bytes {
@@ -130,9 +131,7 @@ impl BufferState {
         if drop == 0 {
             return;
         }
-        for _ in 0..drop {
-            self.data.pop_front();
-        }
+        self.data.drain(..drop);
         self.start_pos += drop as u64;
 
         let current_end = self.start_pos + self.data.len() as u64;
