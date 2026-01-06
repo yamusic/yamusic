@@ -56,8 +56,6 @@ impl EventHandler {
     }
 
     pub async fn handle_action(app: &mut App, evt: Event) {
-        info!("Handling action: {:?}", evt);
-
         app.router.on_event(&evt, &app.ctx).await;
 
         match evt {

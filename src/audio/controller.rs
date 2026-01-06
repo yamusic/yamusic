@@ -22,7 +22,7 @@ pub struct AudioController {
     stream_manager: Arc<StreamManager>,
     state: Arc<RwLock<PlaybackState>>,
     event_tx: Sender<Event>,
-    pub track_progress: Arc<TrackProgress>,
+    pub track_progress: Arc<RwLock<Arc<TrackProgress>>>,
     current_playback_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     pub current_amplitude: Arc<AtomicU32>,
     volume: Arc<AtomicU8>,
@@ -32,15 +32,15 @@ pub struct AudioController {
 impl AudioController {
     pub fn new(
         engine: PlaybackEngine,
-        stream_manager: StreamManager,
+        stream_manager: Arc<StreamManager>,
         event_tx: Sender<Event>,
     ) -> Self {
         let controller = Self {
             engine: Arc::new(engine),
-            stream_manager: Arc::new(stream_manager),
+            stream_manager,
             state: Arc::new(RwLock::new(PlaybackState::Stopped)),
             event_tx,
-            track_progress: Arc::new(TrackProgress::default()),
+            track_progress: Arc::new(RwLock::new(Arc::new(TrackProgress::default()))),
             current_playback_task: Arc::new(Mutex::new(None)),
             current_amplitude: Arc::new(AtomicU32::new(0)),
             volume: Arc::new(AtomicU8::new(100)),
@@ -68,7 +68,9 @@ impl AudioController {
 
                 if is_playing {
                     let pos = engine.get_pos();
-                    progress.set_current_position(pos);
+                    if let Ok(guard) = progress.read() {
+                        guard.set_current_position(pos);
+                    }
 
                     if engine.is_empty() {
                         let mut state_guard = state.write().unwrap();
@@ -112,11 +114,12 @@ impl AudioController {
         self.apply_volume();
 
         let task = tokio::spawn(async move {
-            match stream_manager
-                .create_stream_session(&track_clone, progress.clone())
-                .await
-            {
-                Ok(session) => {
+            match stream_manager.create_stream_session(&track_clone).await {
+                Ok((session, new_progress)) => {
+                    if let Ok(mut guard) = progress.write() {
+                        *guard = new_progress;
+                    }
+
                     let mut source = FxSource::new(session.source);
                     source.add_effect(AudioAnalyzer::new(amplitude));
 
@@ -158,7 +161,9 @@ impl AudioController {
             task.abort();
         }
         self.engine.stop();
-        self.track_progress.reset();
+        if let Ok(progress) = self.track_progress.read() {
+            progress.reset();
+        }
         let mut state = self.state.write().unwrap();
         *state = PlaybackState::Stopped;
     }
@@ -181,7 +186,9 @@ impl AudioController {
 
     async fn seek(&self, pos: std::time::Duration) {
         let _ = self.engine.try_seek(pos);
-        self.track_progress.set_current_position(pos);
+        if let Ok(progress) = self.track_progress.read() {
+            progress.set_current_position(pos);
+        }
     }
 
     pub fn current_amplitude(&self) -> f32 {

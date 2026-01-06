@@ -19,7 +19,7 @@ use yandex_music::{
     },
     model::{
         album::Album,
-        info::{file_info::Codec, lyrics::LyricsFormat, pager::Pager},
+        info::{lyrics::LyricsFormat, pager::Pager},
         landing::wave::LandingWave,
         playlist::Playlist,
         rotor::session::Session,
@@ -54,6 +54,8 @@ impl ApiService {
 
             reqwest::Client::builder()
                 .default_headers(headers)
+                .pool_max_idle_per_host(0)
+                .pool_idle_timeout(Some(std::time::Duration::ZERO))
                 .build()?
         };
 
@@ -157,7 +159,7 @@ impl ApiService {
         &self,
         track_id: String,
     ) -> color_eyre::Result<(String, String, u32)> {
-        let opts = GetFileInfoOptions::new(track_id).codecs(vec![Codec::FlacMp4]);
+        let opts = GetFileInfoOptions::new(track_id);
         let info = self.client.get_file_info(&opts).await?;
 
         Ok((info.url, info.codec, info.bitrate))
@@ -167,7 +169,7 @@ impl ApiService {
         &self,
         track_ids: Vec<String>,
     ) -> color_eyre::Result<Vec<(String, String, String, u32)>> {
-        let opts = GetFileInfoBatchOptions::new(track_ids.clone()).codecs(vec![Codec::FlacMp4]);
+        let opts = GetFileInfoBatchOptions::new(track_ids.clone());
         let results = self.client.get_file_info_batch(&opts).await?;
 
         let mut mapped = Vec::new();

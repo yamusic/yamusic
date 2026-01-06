@@ -29,9 +29,9 @@ impl AudioSystem {
     pub async fn new(event_tx: Sender<Event>, api: Arc<ApiService>) -> color_eyre::Result<Self> {
         let engine = PlaybackEngine::new()?;
         let url_cache = UrlCache::new();
-        let stream_manager = StreamManager::new(api.clone(), url_cache.clone());
-        let controller = AudioController::new(engine, stream_manager, event_tx.clone());
-        let mut queue = QueueManager::new(api.clone(), url_cache);
+        let stream_manager = Arc::new(StreamManager::new(api.clone(), url_cache.clone()));
+        let controller = AudioController::new(engine, stream_manager.clone(), event_tx.clone());
+        let mut queue = QueueManager::new(api.clone(), url_cache, stream_manager.clone());
         queue.set_event_tx(event_tx.clone());
 
         Ok(Self {
@@ -148,7 +148,12 @@ impl AudioSystem {
     }
 
     pub async fn seek_backwards(&mut self, seconds: u64) {
-        let (current_ms, _) = self.controller.track_progress.get_progress();
+        let (current_ms, _) = self
+            .controller
+            .track_progress
+            .read()
+            .unwrap()
+            .get_progress();
         let delta_ms = seconds * 1000;
         let new_pos_ms = current_ms.saturating_sub(delta_ms);
         self.controller
@@ -159,7 +164,12 @@ impl AudioSystem {
     }
 
     pub async fn seek_forwards(&mut self, seconds: u64) {
-        let (current_ms, total_ms) = self.controller.track_progress.get_progress();
+        let (current_ms, total_ms) = self
+            .controller
+            .track_progress
+            .read()
+            .unwrap()
+            .get_progress();
         let delta_ms = seconds * 1000;
         let mut new_pos_ms = current_ms.saturating_add(delta_ms);
         if total_ms > 0 {
@@ -208,8 +218,8 @@ impl AudioSystem {
         self.controller.is_muted()
     }
 
-    pub fn track_progress(&self) -> &Arc<TrackProgress> {
-        &self.controller.track_progress
+    pub fn track_progress(&self) -> Arc<TrackProgress> {
+        self.controller.track_progress.read().unwrap().clone()
     }
 
     pub fn queue(&self) -> &Vec<Track> {
