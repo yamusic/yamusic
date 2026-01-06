@@ -88,8 +88,9 @@ impl<'a> AppLayout<'a> {
             track_artist = None;
         }
 
+        let progress = self.app.ctx.audio_system.track_progress();
         let player_widget = PlayerWidget::new(
-            self.app.ctx.audio_system.track_progress(),
+            &progress,
             &track_title,
             track_artist,
             self.app.ctx.audio_system.repeat_mode(),

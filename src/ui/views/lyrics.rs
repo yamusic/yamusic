@@ -24,7 +24,7 @@ impl View for Lyrics {
         }
 
         let track_progress = ctx.audio_system.track_progress();
-        let widget = LyricsWidget::new(self.lyrics.as_deref(), track_progress);
+        let widget = LyricsWidget::new(self.lyrics.as_deref(), &track_progress);
         f.render_widget(widget, area);
     }
 
