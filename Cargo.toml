@@ -11,15 +11,22 @@ version = "0.0.1"
 
 [dependencies]
 # Core 
-tokio = { version = "1.45.1", features = ["full"] }
-reqwest = { version = "0.12.20", features = ["blocking"] }
+tokio = { version = "1.49.0", features = ["full"] }
+reqwest = { version = "0.13.2", default-features = false, features = [
+  "blocking",
+  "native-tls",
+  "gzip",
+  "json",
+  "http2",
+  "native-tls-vendored",
+] }
 
 # TUI
-ratatui = { version = "0.29.0", features = ["unstable-widget-ref"] }
-crossterm = { version = "0.28.1", features = ["event-stream"] }
+ratatui = { version = "0.30.0", features = ["unstable-widget-ref"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 
 # Audio
-rodio = { git = "https://github.com/rustaudio/rodio", rev = "1b3459a93c59b8bb1a0351ac4b560e54c5c917b5", default-features = false, features = [
+rodio = { git = "https://github.com/rustaudio/rodio", rev = "dd70cd43632dd6cf705c1e6b0fec78e5424c1a85", default-features = false, features = [
   "playback",
   "symphonia-flac",
   "symphonia-aac",
@@ -27,38 +34,76 @@ rodio = { git = "https://github.com/rustaudio/rodio", rev = "1b3459a93c59b8bb1a0
   "symphonia-isomp4",
   "symphonia-simd",
   "tracing",
+  "crossbeam-channel",
 ] }
 
 
-yandex-music = "0.4.4"
+yandex-music = "0.4.10"
 
 # Utilities
-unicode-width = "0.1"
+unicode-width = "0.2.2"
 # Logging
 tracing-error = "0.2.1"
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 color-eyre = "0.6.5"
 directories = "6.0.0"
 
 # Utilities
-flume = "0.11.1"
+flume = "0.12.0"
 dotenv = "0.15.0"
 lazy_static = "1.5.0"
-rand = "0.9.1"
+rand = "0.9.2"
 crossbeam-channel = "0.5.15"
 thiserror = "2.0.17"
 async-trait = "0.1.89"
 futures = "0.3"
 
-rayon = "1.10"
-wgpu = "0.20"
-bytemuck = { version = "1.16", features = ["derive"] }
-pollster = "0.3"
+rayon = "1.11"
+wgpu = "28.0"
+bytemuck = { version = "1.24", features = ["derive"] }
+pollster = "0.4"
+im = "15.1.0"
+arc-swap = "1"
+uuid = { version = "1.21.0", features = ["v4"] }
+nucleo-matcher = "0.3.1"
+
+[features]
+nightly = []
+
+[workspace]
+members = ["."]
+
+[workspace.dependencies]
+keyring = "3.6.3"
+
+[target.'cfg(target_os = "linux")'.dependencies.keyring]
+workspace = true
+features = [
+  "linux-native",
+  "linux-native-sync-persistent",
+  "sync-secret-service",
+  "crypto-rust",
+]
+
+[target.'cfg(target_os = "macos")'.dependencies.keyring]
+workspace = true
+features = ["apple-native", "crypto-rust"]
+
+[target.'cfg(target_os = "windows")'.dependencies.keyring]
+workspace = true
+features = ["windows-native", "crypto-rust"]
 
 [profile.inc]
 inherits = "release"
 opt-level = 2
+codegen-units = 1024
+lto = false
+incremental = true
+
+[profile.fast]
+inherits = "inc"
+opt-level = 1
 codegen-units = 1024
 lto = false
 incremental = true

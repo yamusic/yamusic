@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use super::buffer::BufferState;
 
-const PREFETCH_SIZE: usize = 256 * 1024;
+const PREFETCH_SIZE: usize = 512 * 1024;
 const MIN_INITIAL_DATA: usize = 64 * 1024;
 const MAX_ATTEMPTS: usize = 100;
 
@@ -152,10 +152,9 @@ impl StreamingDataSource {
 
                             if request_generation == generation.load(Ordering::SeqCst)
                                 && progress_generation == prog.get_generation()
+                                && let Some(buffered_pos) = maybe_buffered
                             {
-                                if let Some(buffered_pos) = maybe_buffered {
-                                    prog.set_buffered_bytes(buffered_pos);
-                                }
+                                prog.set_buffered_bytes(buffered_pos);
                             }
                             let _ = tx_res.send(());
                         }
@@ -266,7 +265,7 @@ impl StreamingDataSource {
         }
     }
 
-    pub fn get_total_bytes(&self) -> u64 {
+    pub fn total_bytes(&self) -> u64 {
         self.total_bytes
     }
 }

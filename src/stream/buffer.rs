@@ -67,10 +67,11 @@ impl BufferState {
             return false;
         }
 
-        if let Some((s, e)) = self.pending {
-            if start >= s && start < e {
-                self.pending = None;
-            }
+        if let Some((s, e)) = self.pending
+            && start >= s
+            && start < e
+        {
+            self.pending = None;
         }
 
         if start < self.start_pos {

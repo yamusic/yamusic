@@ -1,8 +1,8 @@
 use std::num::NonZero;
 
 use rodio::{
-    Device, DeviceTrait, OutputStream, OutputStreamBuilder, Sink,
-    cpal::{BufferSize, SampleFormat, SampleRate, StreamConfig, default_host, traits::HostTrait},
+    Device, DeviceSinkBuilder, DeviceTrait, MixerDeviceSink, Player,
+    cpal::{BufferSize, SampleFormat, StreamConfig, default_host, traits::HostTrait},
 };
 
 pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
@@ -17,7 +17,7 @@ pub fn setup_device_config() -> (Device, StreamConfig, SampleFormat) {
     } else {
         config = StreamConfig {
             channels: 2,
-            sample_rate: SampleRate(44100),
+            sample_rate: 44100,
             buffer_size: BufferSize::Default,
         };
         sample_format = SampleFormat::F32;
@@ -30,15 +30,15 @@ pub fn construct_sink(
     device: Device,
     config: &StreamConfig,
     sample_format: SampleFormat,
-) -> color_eyre::Result<(OutputStream, Sink)> {
-    let stream = OutputStreamBuilder::default()
+) -> color_eyre::Result<(MixerDeviceSink, Player)> {
+    let stream = DeviceSinkBuilder::default()
         .with_buffer_size(config.buffer_size)
-        .with_sample_rate(NonZero::new(config.sample_rate.0).unwrap())
+        .with_sample_rate(NonZero::new(config.sample_rate).unwrap())
         .with_device(device)
         .with_sample_format(sample_format)
-        .open_stream_or_fallback()?;
+        .open_sink_or_fallback()?;
     let mixer = stream.mixer();
-    let sink = Sink::connect_new(mixer);
+    let sink = Player::connect_new(mixer);
 
     Ok((stream, sink))
 }

@@ -27,6 +27,7 @@ impl AudioAnalyzer {
 }
 
 impl Fx for AudioAnalyzer {
+    #[inline(always)]
     fn process(&mut self, sample: f32) -> f32 {
         self.sum_squares += sample * sample;
         self.count += 1;
