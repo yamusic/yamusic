@@ -1,3 +1,4 @@
+use crate::audio::liked::LikedSnapshot;
 use yandex_music::model::{
     album::Album, artist::Artist, info::pager::Pager, playlist::Playlist, rotor::session::Session,
     search::Search, track::Track,
@@ -6,7 +7,6 @@ use yandex_music::model::{
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {
-    // Events
     Initialize,
     TrackStarted(Track, usize),
     TrackEnded,
@@ -32,8 +32,8 @@ pub enum Event {
     FetchError(String),
     WaveReady(Session, Vec<Track>),
     QueueUpdated,
+    LikedStatusUpdated(LikedSnapshot),
 
-    // Commands
     Play(i32),
     Search(String),
     Resume,

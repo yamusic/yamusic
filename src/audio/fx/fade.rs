@@ -52,6 +52,7 @@ impl Fade {
 }
 
 impl Fx for Fade {
+    #[inline(always)]
     fn process(&mut self, sample: f32) -> f32 {
         let pos = self.current_sample;
         self.current_sample += 1.0;

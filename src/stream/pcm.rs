@@ -1,9 +1,8 @@
 use crate::audio::progress::TrackProgress;
 use color_eyre::{Result, eyre::eyre};
 use crossbeam_channel::{
-    Receiver as CbReceiver, Sender as CbSender, TryRecvError, bounded as cb_bounded,
+    Receiver as CbReceiver, Sender as CbSender, TryRecvError, bounded as cb_bounded, select,
 };
-use flume::{Receiver, Sender};
 use rodio::{Decoder, Source};
 use std::num::NonZero;
 use std::sync::{
@@ -17,8 +16,9 @@ use reqwest::blocking::Client;
 
 use super::data_source::StreamingDataSource;
 
-const PCM_CHUNK_SAMPLES: usize = 8192;
-const SAMPLE_CHANNEL_CAPACITY: usize = 32;
+const PCM_CHUNK_SAMPLES: usize = 16384;
+
+const SAMPLE_CHANNEL_CAPACITY: usize = 64;
 
 enum SampleMessage {
     Samples(Vec<f32>, u64),
@@ -32,7 +32,7 @@ enum DecoderCommand {
 
 #[derive(Clone)]
 pub struct StreamController {
-    cmd_tx: Sender<DecoderCommand>,
+    cmd_tx: CbSender<DecoderCommand>,
     generation: Arc<AtomicU64>,
 }
 
@@ -179,7 +179,7 @@ pub fn create_streaming_session(
     progress: Arc<TrackProgress>,
 ) -> Result<StreamingSession> {
     let data_source = StreamingDataSource::new(client, url, Arc::clone(&progress))?;
-    let total_bytes = data_source.get_total_bytes();
+    let total_bytes = data_source.total_bytes();
 
     let decoder = Decoder::builder()
         .with_data(data_source)
@@ -198,7 +198,7 @@ pub fn create_streaming_session(
     }
 
     let (sample_tx, sample_rx) = cb_bounded::<SampleMessage>(SAMPLE_CHANNEL_CAPACITY);
-    let (cmd_tx, cmd_rx) = flume::unbounded();
+    let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<DecoderCommand>();
     let generation = Arc::new(AtomicU64::new(0));
     let controller = StreamController {
         cmd_tx,
@@ -237,37 +237,57 @@ pub fn create_streaming_session(
 fn run_decode_loop(
     mut decoder: Decoder<StreamingDataSource>,
     sample_tx: CbSender<SampleMessage>,
-    cmd_rx: Receiver<DecoderCommand>,
+    cmd_rx: CbReceiver<DecoderCommand>,
     generation: Arc<AtomicU64>,
     progress: Arc<TrackProgress>,
     progress_generation: u64,
 ) {
     let mut active_generation = generation.load(Ordering::Acquire);
-    let mut stopped = false;
     let mut chunk = Vec::with_capacity(PCM_CHUNK_SAMPLES);
+    let mut pending_chunk: Option<Vec<f32>> = None;
 
     loop {
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                DecoderCommand::Seek {
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(DecoderCommand::Seek {
                     position,
-                    generation,
-                } => {
+                    generation: new_gen,
+                }) => {
                     let _ = decoder.try_seek(position);
                     if progress_generation == progress.get_generation() {
                         progress.set_current_position(position);
                     }
-                    active_generation = generation;
+                    active_generation = new_gen;
+                    pending_chunk = None;
                 }
-                DecoderCommand::Stop => {
-                    stopped = true;
-                    break;
-                }
+                Ok(DecoderCommand::Stop) => return,
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => return,
             }
         }
 
-        if stopped {
-            break;
+        if let Some(chunk_to_send) = pending_chunk.take() {
+            select! {
+                send(sample_tx, SampleMessage::Samples(chunk_to_send, active_generation)) -> res => {
+                    if res.is_err() {
+                        return;
+                    }
+                }
+                recv(cmd_rx) -> msg => {
+                    match msg {
+                        Ok(DecoderCommand::Seek { position, generation: new_gen }) => {
+                            let _ = decoder.try_seek(position);
+                            if progress_generation == progress.get_generation() {
+                                progress.set_current_position(position);
+                            }
+                            active_generation = new_gen;
+                            continue;
+                        }
+                        Ok(DecoderCommand::Stop) => return,
+                        Err(_) => return,
+                    }
+                }
+            }
         }
 
         chunk.clear();
@@ -280,15 +300,21 @@ fn run_decode_loop(
 
         if chunk.is_empty() {
             let _ = sample_tx.send(SampleMessage::Finished(active_generation));
-            break;
+            return;
         }
 
         let send_chunk = std::mem::replace(&mut chunk, Vec::with_capacity(PCM_CHUNK_SAMPLES));
-        if sample_tx
-            .send(SampleMessage::Samples(send_chunk, active_generation))
-            .is_err()
-        {
-            break;
+
+        match sample_tx.try_send(SampleMessage::Samples(send_chunk, active_generation)) {
+            Ok(()) => {}
+            Err(crossbeam_channel::TrySendError::Full(msg)) => {
+                if let SampleMessage::Samples(chunk_data, _) = msg {
+                    pending_chunk = Some(chunk_data);
+                }
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                return;
+            }
         }
     }
 }

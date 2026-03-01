@@ -1,10 +1,10 @@
 use crate::audio::util::{construct_sink, setup_device_config};
-use rodio::{OutputStream, Sink, Source};
+use rodio::{MixerDeviceSink, Player, Source};
 use std::sync::Arc;
 
 pub struct PlaybackEngine {
-    _stream: OutputStream,
-    sink: Arc<Sink>,
+    _stream: MixerDeviceSink,
+    sink: Arc<Player>,
 }
 
 impl PlaybackEngine {
@@ -49,7 +49,7 @@ impl PlaybackEngine {
         self.sink.empty()
     }
 
-    pub fn get_pos(&self) -> std::time::Duration {
+    pub fn pos(&self) -> std::time::Duration {
         self.sink.get_pos()
     }
 

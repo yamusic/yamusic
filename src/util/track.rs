@@ -1,6 +1,6 @@
 use yandex_music::model::playlist::PlaylistTracks;
 
-pub fn extract_track_ids(playlist_tracks: &PlaylistTracks) -> Vec<String> {
+pub fn extract_ids(playlist_tracks: &PlaylistTracks) -> Vec<String> {
     match playlist_tracks {
         PlaylistTracks::Full(tracks) => tracks
             .iter()
