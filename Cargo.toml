@@ -11,14 +11,14 @@ version = "0.1.0"
 
 [dependencies]
 # Core 
-tokio = { version = "1.49.0", features = ["full"] }
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
 reqwest = { version = "0.13.2", default-features = false, features = [
   "blocking",
   "native-tls",
   "gzip",
   "json",
   "http2",
-  "native-tls-vendored",
+  # "native-tls-vendored",
 ] }
 
 # TUI
@@ -59,13 +59,11 @@ thiserror = "2.0.17"
 async-trait = "0.1.89"
 futures = "0.3"
 
-rayon = "1.11"
 wgpu = "28.0"
 bytemuck = { version = "1.24", features = ["derive"] }
 pollster = "0.4"
 im = "15.1.0"
 arc-swap = "1"
-uuid = { version = "1.21.0", features = ["v4"] }
 nucleo-matcher = "0.3.1"
 
 [features]
