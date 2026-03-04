@@ -84,6 +84,7 @@ Some actions require a sequence of keys:
 #### `g` (Go/Jump)
 - `g` + `q` - Open Queue
 - `g` + `y` - Open Lyrics
+- `g` + `e` - Open Effects
 
 ### Selection Actions
 - `f` - Like selected track
