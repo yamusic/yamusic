@@ -3,8 +3,10 @@
 A terminal-based client for Yandex Music (unofficial). Not affiliated with Yandex in any way. Feature-complete for day to day use, but still a WIP.
 
 <table>
-<td><img src="https://github.com/user-attachments/assets/9f2c9541-8cbd-4e38-a003-3ba9d0d9391f" width="600"/></td>
-<td><img src="https://github.com/user-attachments/assets/0665f5b2-fabf-4d03-9d34-54073bfbfec5" width="600"/></td>
+<td><p align="center">My Wave</p><img src="https://github.com/user-attachments/assets/9f2c9541-8cbd-4e38-a003-3ba9d0d9391f" width="600"/></td>
+<td><p align="center">Lyrics</p><img src="https://github.com/user-attachments/assets/0665f5b2-fabf-4d03-9d34-54073bfbfec5" width="600"/></td>
+<td><p align="center">Equalizer</p><img src="https://github.com/user-attachments/assets/f7d8a64a-0e18-49d8-8c9c-8fa539485a3f" width="600"/></td>
+
 </tr>
 </table>
 
