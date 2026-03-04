@@ -51,6 +51,8 @@ pub enum Action {
         toast_message: Option<Vec<ratatui::text::Line<'static>>>,
     },
     RefreshWaves,
+    ToggleEffect(String),
+    ToggleEqPreset(String),
     Quit,
     Toast(String),
     Focus(String),
@@ -97,6 +99,7 @@ pub enum Route {
     Track { id: String },
     Lyrics,
     Queue,
+    Effects,
     Settings,
 }
 
@@ -113,6 +116,7 @@ impl Route {
             Route::Track { id } => format!("Track {}", id),
             Route::Lyrics => "Lyrics".to_string(),
             Route::Queue => "Queue".to_string(),
+            Route::Effects => "Effects".to_string(),
             Route::Settings => "Settings".to_string(),
         }
     }

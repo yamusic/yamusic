@@ -76,6 +76,21 @@ impl AudioSystem {
         &self.signals
     }
 
+    pub fn toggle_effect(&self, name: &str) -> bool {
+        self.controller.toggle_effect(name)
+    }
+
+    pub fn is_effect_enabled(&self, name: &str) -> Option<bool> {
+        self.controller.is_effect_enabled(name)
+    }
+
+    pub fn get_effect_handles(
+        &self,
+    ) -> Arc<std::sync::RwLock<std::collections::HashMap<String, crate::audio::fx::EffectHandle>>>
+    {
+        self.controller.get_effect_handles()
+    }
+
     pub async fn load_context(
         &mut self,
         context: PlaybackContext,
