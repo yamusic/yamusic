@@ -1,3 +1,5 @@
+pub mod fx;
+
 use crate::{
     app::{actions::Route, components::Lyrics},
     framework::{signals::Signal, theme::ThemeStyles},
@@ -8,6 +10,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
+pub use fx::EffectsOverlay;
+
 pub struct OverlayRenderer;
 
 impl OverlayRenderer {
@@ -17,16 +21,19 @@ impl OverlayRenderer {
         route: &Route,
         theme: &Signal<ThemeStyles>,
         lyrics: &mut Lyrics,
+        effects: &mut EffectsOverlay,
     ) {
+        let styles = theme.get();
         match route {
             Route::Lyrics => {
-                let styles = theme.get();
                 frame.render_widget(Clear, content_area);
                 frame.buffer_mut().set_style(content_area, styles.text);
                 lyrics.view(frame, content_area);
             }
+            Route::Effects => {
+                effects.view(frame, content_area, &styles);
+            }
             _ => {
-                let styles = theme.get();
                 frame.render_widget(Clear, content_area);
                 frame.buffer_mut().set_style(content_area, styles.text);
 

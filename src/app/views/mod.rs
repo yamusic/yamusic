@@ -6,6 +6,7 @@ mod search;
 mod track_list;
 
 pub use home::HomeView;
+pub use overlay::EffectsOverlay;
 pub use overlay::OverlayRenderer;
 pub use playlist_list::PlaylistListView;
 pub use renderers::*;

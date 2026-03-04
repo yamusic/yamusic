@@ -1,16 +1,18 @@
 use flume::Sender;
 use rodio::Source;
-use std::sync::{
-    Arc, RwLock,
-    atomic::{AtomicU32, Ordering},
-};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use yandex_music::model::track::Track;
 
 use crate::audio::{
     commands::AudioCommand,
-    fx::{AudioEffect, FxSource, analyzer::AudioAnalyzer, fade::Fade},
-    monitor::BridgeMonitor,
+    fx::{
+        EffectHandle, FxSource,
+        modules::{FadeEffect, MonitorEffect},
+        param::EffectParams,
+    },
     playback::PlaybackEngine,
     progress::TrackProgress,
     signals::AudioSignals,
@@ -24,8 +26,8 @@ pub struct AudioController {
     event_tx: Sender<Event>,
     pub track_progress: Arc<RwLock<Arc<TrackProgress>>>,
     current_playback_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    pub current_amplitude: Arc<AtomicU32>,
     signals: AudioSignals,
+    effect_handles: Arc<RwLock<HashMap<String, EffectHandle>>>,
 }
 
 impl AudioController {
@@ -41,8 +43,8 @@ impl AudioController {
             event_tx,
             track_progress: Arc::new(RwLock::new(Arc::new(TrackProgress::default()))),
             current_playback_task: Arc::new(Mutex::new(None)),
-            current_amplitude: Arc::new(AtomicU32::new(0)),
             signals,
+            effect_handles: Arc::new(RwLock::new(HashMap::new())),
         };
 
         controller.start_monitor();
@@ -58,7 +60,6 @@ impl AudioController {
         let progress = self.track_progress.clone();
         let signals = self.signals.clone();
         let event_tx = self.event_tx.clone();
-        let amplitude_atomic = self.current_amplitude.clone();
 
         tokio::spawn(async move {
             loop {
@@ -74,7 +75,7 @@ impl AudioController {
                         continue;
                     }
 
-                    if signals.bridge.is_focused() {
+                    if signals.monitor.is_focused() {
                         let pos = engine.pos();
                         let dur = signals.duration_ms.get();
 
@@ -86,8 +87,7 @@ impl AudioController {
                             signals.update_buffered_ratio(buffered);
                         }
 
-                        let amp = f32::from_bits(amplitude_atomic.load(Ordering::Relaxed));
-                        signals.amplitude.set(amp);
+                        signals.amplitude.set(signals.monitor.combined_amplitude());
                     }
                 }
             }
@@ -119,8 +119,8 @@ impl AudioController {
         let event_tx = self.event_tx.clone();
         let signals = self.signals.clone();
         let track_clone = track.clone();
-        let amplitude = self.current_amplitude.clone();
-        let bridge = self.signals.bridge.clone();
+        let monitor = self.signals.monitor.clone();
+        let effect_handles_store = self.effect_handles.clone();
 
         self.apply_volume();
 
@@ -132,18 +132,51 @@ impl AudioController {
                     }
 
                     let mut source = FxSource::new(session.source);
-                    source.add_effect(AudioEffect::Analyzer(AudioAnalyzer::new(amplitude)));
-                    source.add_effect(AudioEffect::BridgeMonitor(BridgeMonitor::new(bridge)));
+
+                    let monitor_params = Arc::new(EffectParams::new(&[]));
+                    monitor_params.set_enabled(true);
+                    source.add_effect(
+                        "monitor",
+                        "Audio Monitor",
+                        Box::new(MonitorEffect::new(monitor)),
+                        monitor_params,
+                    );
 
                     if let Some(fade) = track_clone.fade.clone() {
-                        source.add_effect(AudioEffect::Fade(Fade::new(
-                            fade.in_start,
-                            fade.in_stop,
-                            fade.out_start,
-                            fade.out_stop,
-                            source.sample_rate().get(),
-                            source.channels().get(),
-                        )));
+                        let fade_params = Arc::new(EffectParams::new(&[]));
+                        fade_params.set_enabled(true);
+                        source.add_effect(
+                            "fade",
+                            "Fade",
+                            Box::new(FadeEffect::new(
+                                fade.in_start,
+                                fade.in_stop,
+                                fade.out_start,
+                                fade.out_stop,
+                                source.sample_rate().get(),
+                                source.channels().get(),
+                            )),
+                            fade_params,
+                        );
+                    }
+
+                    crate::audio::fx::init::init_all(&mut source);
+
+                    if let Ok(old_store) = effect_handles_store.read() {
+                        let new_handles = source.get_effect_handles();
+                        for (name, new_handle) in new_handles.iter() {
+                            if let Some(old_handle) = old_store.get(name) {
+                                new_handle.set_enabled(old_handle.is_enabled());
+                                for i in 0..old_handle.param_count().min(new_handle.param_count()) {
+                                    new_handle.set_param(i, old_handle.get_param(i));
+                                }
+                            }
+                        }
+                    }
+
+                    let handles = source.get_effect_handles();
+                    if let Ok(mut store) = effect_handles_store.write() {
+                        *store = handles;
                     }
 
                     engine.play_source(source);
@@ -198,12 +231,44 @@ impl AudioController {
         if let Ok(progress) = self.track_progress.read() {
             progress.set_current_position(pos);
         }
+    }
+
+    pub fn get_effect_handles(&self) -> Arc<RwLock<HashMap<String, EffectHandle>>> {
+        self.effect_handles.clone()
+    }
+
+    pub fn set_effect_handles(&self, handles: HashMap<String, EffectHandle>) {
+        if let Ok(mut guard) = self.effect_handles.write() {
+            *guard = handles;
+        }
+    }
+
+    pub fn toggle_effect(&self, name: &str) -> bool {
+        if let Ok(guard) = self.effect_handles.read()
+            && let Some(handle) = guard.get(name)
+        {
+            let enabled = handle.is_enabled();
+            handle.set_enabled(!enabled);
+            return true;
+        }
+        false
+    }
+
+    pub fn is_effect_enabled(&self, name: &str) -> Option<bool> {
+        if let Ok(guard) = self.effect_handles.read() {
+            guard.get(name).map(|h| h.is_enabled())
+        } else {
+            None
+        }
+    }
+
+    pub fn update_progress(&self, pos: Duration) {
         let dur = self.signals.duration_ms.get();
         self.signals.update_progress(pos.as_millis() as u64, dur);
     }
 
     pub fn current_amplitude(&self) -> f32 {
-        f32::from_bits(self.current_amplitude.load(Ordering::Relaxed))
+        self.signals.monitor.combined_amplitude()
     }
 
     pub fn is_playing(&self) -> bool {

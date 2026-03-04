@@ -89,5 +89,10 @@ Some actions require a sequence of keys:
 - `w` - Start "My Wave" from selected track
 - `Ctrl+c` - Quit
 
-## My Wave View
+### My Wave View
 - `w` - Customize and start a "My Wave" station
+
+## Acknowledgements
+
+- [Audio EQ Cookbook](https://www.w3.org/TR/audio-eq-cookbook/)
+- [Dattorro Effect Design](https://ccrma.stanford.edu/~dattorro/EffectDesignPart1.pdf)

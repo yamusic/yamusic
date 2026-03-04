@@ -4,54 +4,33 @@ use im::Vector;
 use yandex_music::model::track::Track;
 
 use crate::audio::enums::RepeatMode;
-use crate::framework::audio_bridge::AudioBridge;
+use crate::audio::monitor::Monitor;
 use crate::framework::signals::Signal;
 
 #[derive(Clone)]
 pub struct AudioSignals {
     pub is_playing: Signal<bool>,
-
     pub is_paused: Signal<bool>,
-
     pub is_stopped: Signal<bool>,
-
     pub is_buffering: Signal<bool>,
-
     pub current_track: Signal<Option<Track>>,
-
     pub current_track_id: Signal<Option<String>>,
-
     pub track_title: Signal<Option<String>>,
-
     pub track_artists: Signal<Option<String>>,
-
     pub position_ms: Signal<u64>,
-
     pub duration_ms: Signal<u64>,
-
     pub progress_ratio: Signal<f32>,
-
     pub buffered_ratio: Signal<f32>,
-
     pub volume: Signal<u8>,
-
     pub is_muted: Signal<bool>,
-
     pub queue: Signal<Vector<Track>>,
-
     pub history: Signal<Vector<Track>>,
-
     pub queue_index: Signal<usize>,
-
     pub queue_length: Signal<usize>,
-
     pub repeat_mode: Signal<RepeatMode>,
-
     pub is_shuffled: Signal<bool>,
-
     pub amplitude: Signal<f32>,
-
-    pub bridge: Arc<AudioBridge>,
+    pub monitor: Arc<Monitor>,
 }
 
 impl AudioSignals {
@@ -78,7 +57,7 @@ impl AudioSignals {
             repeat_mode: Signal::new(RepeatMode::None),
             is_shuffled: Signal::new(false),
             amplitude: Signal::new(0.0),
-            bridge: Arc::new(AudioBridge::new(1024)),
+            monitor: Arc::new(Monitor::new(1024)),
         }
     }
 

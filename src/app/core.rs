@@ -25,14 +25,15 @@ use super::{
         PlaylistTracksSource,
     },
     keymap::{
-        Intent, Key, KeyResolver, NavigationIntent, PlaybackIntent, QueueIntent, Target,
-        ViewIntent, normalize,
+        EffectIntent, Intent, Key, KeyResolver, NavigationIntent, PlaybackIntent, QueueIntent,
+        Target, ViewIntent, normalize,
     },
     signals::{AppSignals, LibrarySignals, LyricsSignals, NavigationSignals},
     state::{SearchState, WaveSessionState},
     terminal::{Terminal, TerminalEvent, TickRate},
     views::{
-        HomeView, OverlayRenderer, PlaylistListView, SearchView, TrackListContext, TrackListView,
+        EffectsOverlay, HomeView, OverlayRenderer, PlaylistListView, SearchView, TrackListContext,
+        TrackListView,
     },
 };
 use crate::framework::component::Component;
@@ -67,6 +68,8 @@ pub struct App {
     key_resolver: KeyResolver,
 
     toast_manager: ToastManager,
+
+    effects_overlay: EffectsOverlay,
 }
 
 impl App {
@@ -77,6 +80,7 @@ impl App {
         event_rx: Receiver<Event>,
     ) -> color_eyre::Result<Self> {
         let audio_signals = audio.signals().clone();
+        let effect_handles = audio.get_effect_handles();
 
         let audio = Arc::new(RwLock::new(audio));
 
@@ -186,6 +190,7 @@ impl App {
             lyrics,
             theme: theme_styles.clone(),
             toast_manager: ToastManager::new(theme_styles),
+            effects_overlay: EffectsOverlay::new(effect_handles),
         })
     }
 
@@ -195,10 +200,10 @@ impl App {
 
     fn update_bridge_state(&self) {
         let should_enable = self.signals.is_focused.get() && self.current_route == Route::Home;
-        self.signals.audio.bridge.set_enabled(should_enable);
+        self.signals.audio.monitor.set_enabled(should_enable);
         self.signals
             .audio
-            .bridge
+            .monitor
             .set_focused(self.signals.is_focused.get());
     }
 
@@ -761,6 +766,60 @@ impl App {
                 }
                 _ => {}
             },
+            Action::ToggleEffect(effect_name) => {
+                let audio = self.audio.read().await;
+                if audio.toggle_effect(&effect_name) {
+                    let status = if audio.is_effect_enabled(&effect_name).unwrap_or(false) {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    };
+                    self.toast_manager
+                        .push(format!("󰐾 Effect {}: {}", effect_name, status));
+                } else {
+                    self.toast_manager
+                        .push(format!("󰐾 Effect {} not found", effect_name));
+                }
+            }
+            Action::ToggleEqPreset(preset_name) => {
+                let audio = self.audio.read().await;
+                let preset_effects: Vec<String> = match preset_name.as_str() {
+                    "vocal" => vec!["eq_vocal_cut_mud".into(), "eq_vocal_presence".into()],
+                    "bass" => vec!["eq_bass_sub".into(), "eq_bass_punch".into()],
+                    "acoustic" => vec!["eq_acoustic_warmth".into(), "eq_acoustic_air".into()],
+                    "rock" => vec![
+                        "eq_rock_kick".into(),
+                        "eq_rock_mids".into(),
+                        "eq_rock_highs".into(),
+                    ],
+                    _ => vec![],
+                };
+
+                if preset_effects.is_empty() {
+                    self.toast_manager
+                        .push(format!("󰓃 Unknown EQ preset: {}", preset_name));
+                } else {
+                    let mut toggled = 0;
+                    for effect in &preset_effects {
+                        if audio.toggle_effect(effect) {
+                            toggled += 1;
+                        }
+                    }
+                    if toggled > 0 {
+                        let status = if audio.is_effect_enabled(&preset_effects[0]).unwrap_or(false)
+                        {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        };
+                        self.toast_manager
+                            .push(format!("󰓃 EQ preset '{}': {}", preset_name, status));
+                    } else {
+                        self.toast_manager
+                            .push(format!("󰓃 EQ preset '{}' not loaded", preset_name));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -873,6 +932,13 @@ impl App {
         if in_overlay {
             self.key_resolver.reset();
 
+            if let Some(Route::Effects) = self.signals.navigation.overlay.get() {
+                let action = self.effects_overlay.handle_key(&key);
+                if !matches!(action, Action::None) {
+                    return action;
+                }
+            }
+
             if matches!(key, Key::Esc) {
                 return Action::DismissOverlay;
             }
@@ -943,6 +1009,23 @@ impl App {
             Intent::Navigate(n) => self.execute_navigation_intent(n),
             Intent::View(v) => self.execute_view_intent(v),
             Intent::Queue(q) => self.execute_queue_intent(q),
+            Intent::Effect(e) => self.execute_effect_intent(e),
+        }
+    }
+
+    fn execute_effect_intent(&self, intent: EffectIntent) -> Action {
+        use EffectIntent::*;
+        match intent {
+            ToggleBassBoost => Action::ToggleEffect("bass_boost".into()),
+            ToggleTrebleBoost => Action::ToggleEffect("treble_boost".into()),
+            ToggleChorus => Action::ToggleEffect("chorus".into()),
+            ToggleReverb => Action::ToggleEffect("reverb".into()),
+            ToggleLowpass => Action::ToggleEffect("lowpass".into()),
+            ToggleHighpass => Action::ToggleEffect("highpass".into()),
+            ToggleBandpass => Action::ToggleEffect("bandpass".into()),
+            ToggleNotch => Action::ToggleEffect("notch".into()),
+            ToggleDcBlock => Action::ToggleEffect("dc_block".into()),
+            ToggleEqPreset(name) => Action::ToggleEqPreset(name),
         }
     }
 
@@ -1199,7 +1282,14 @@ impl App {
         self.player_bar.view(frame, main_chunks[1]);
 
         if let Some(overlay) = self.signals.navigation.overlay.get() {
-            OverlayRenderer::render(frame, content_area, &overlay, &self.theme, &mut self.lyrics);
+            OverlayRenderer::render(
+                frame,
+                content_area,
+                &overlay,
+                &self.theme,
+                &mut self.lyrics,
+                &mut self.effects_overlay,
+            );
         }
 
         self.toast_manager.view(frame, area);

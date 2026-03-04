@@ -97,6 +97,20 @@ pub enum QueueIntent {
     Clear,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EffectIntent {
+    ToggleBassBoost,
+    ToggleTrebleBoost,
+    ToggleChorus,
+    ToggleReverb,
+    ToggleLowpass,
+    ToggleHighpass,
+    ToggleBandpass,
+    ToggleNotch,
+    ToggleDcBlock,
+    ToggleEqPreset(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum NavigationIntent {
     Go(Route),
@@ -116,6 +130,7 @@ pub enum Intent {
     Navigate(NavigationIntent),
     View(ViewIntent),
     Queue(QueueIntent),
+    Effect(EffectIntent),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -207,6 +222,7 @@ impl Default for KeyResolver {
 }
 
 fn build_global_keymap() -> Keymap {
+    use EffectIntent;
     use Intent::*;
     use Key::*;
     use NavigationIntent::*;
@@ -267,6 +283,10 @@ fn build_global_keymap() -> Keymap {
             KeySeq::chord(Char('g'), Char('q')),
             Navigate(Go(Route::Queue)),
         ),
+        (
+            KeySeq::chord(Char('g'), Char('e')),
+            Navigate(ShowOverlay(Route::Effects)),
+        ),
         (KeySeq::single(Char('G')), Navigate(ScrollBottom)),
         (KeySeq::single(Tab), Navigate(NextTab)),
         (KeySeq::single(BackTab), Navigate(PrevTab)),
@@ -287,6 +307,58 @@ fn build_global_keymap() -> Keymap {
         (
             KeySeq::chord(Char('q'), Char('c')),
             Queue(QueueIntent::Clear),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('b')),
+            Effect(EffectIntent::ToggleBassBoost),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('t')),
+            Effect(EffectIntent::ToggleTrebleBoost),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('c')),
+            Effect(EffectIntent::ToggleChorus),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('r')),
+            Effect(EffectIntent::ToggleReverb),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('l')),
+            Effect(EffectIntent::ToggleLowpass),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('h')),
+            Effect(EffectIntent::ToggleHighpass),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('p')),
+            Effect(EffectIntent::ToggleBandpass),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('n')),
+            Effect(EffectIntent::ToggleNotch),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('d')),
+            Effect(EffectIntent::ToggleDcBlock),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('1')),
+            Effect(EffectIntent::ToggleEqPreset("vocal".into())),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('2')),
+            Effect(EffectIntent::ToggleEqPreset("bass".into())),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('3')),
+            Effect(EffectIntent::ToggleEqPreset("acoustic".into())),
+        ),
+        (
+            KeySeq::chord(Char('e'), Char('4')),
+            Effect(EffectIntent::ToggleEqPreset("rock".into())),
         ),
     ]))
 }

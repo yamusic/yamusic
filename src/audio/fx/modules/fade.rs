@@ -1,37 +1,32 @@
-use super::Fx;
-use std::time::Duration;
+use super::Effect;
 
-pub struct Fade {
-    sample_rate: u32,
-    channels: u16,
+pub struct FadeEffect {
     fade_in_start: f32,
     fade_in_end: f32,
     fade_out_start: f32,
     fade_out_end: f32,
     inv_fade_in_duration: f32,
     inv_fade_out_duration: f32,
-    current_sample: f32,
+    current_frame: f32,
 }
 
-impl Fade {
+impl FadeEffect {
     pub fn new(
         in_start: f32,
         in_stop: f32,
         out_start: f32,
         out_stop: f32,
         sample_rate: u32,
-        channels: u16,
+        _channels: u16,
     ) -> Self {
-        let to_samples = |t: f32| -> f32 { t * sample_rate as f32 * channels as f32 };
-        let fade_in_start = to_samples(in_start);
-        let fade_in_end = to_samples(in_stop);
-        let fade_out_start = to_samples(out_start);
-        let fade_out_end = to_samples(out_stop);
+        let to_frames = |t: f32| -> f32 { t * sample_rate as f32 };
+        let fade_in_start = to_frames(in_start);
+        let fade_in_end = to_frames(in_stop);
+        let fade_out_start = to_frames(out_start);
+        let fade_out_end = to_frames(out_stop);
         let fade_in_duration = fade_in_end - fade_in_start;
         let fade_out_duration = fade_out_end - fade_out_start;
         Self {
-            sample_rate,
-            channels,
             fade_in_start,
             fade_in_end,
             fade_out_start,
@@ -46,38 +41,43 @@ impl Fade {
             } else {
                 0.0
             },
-            current_sample: 0.0,
+            current_frame: 0.0,
         }
     }
-}
 
-impl Fx for Fade {
     #[inline(always)]
-    fn process(&mut self, sample: f32) -> f32 {
-        let pos = self.current_sample;
-        self.current_sample += 1.0;
-
+    fn apply_gain(&mut self, pos: f32) -> f32 {
         if pos >= self.fade_in_end && pos < self.fade_out_start {
-            return sample;
+            return 1.0;
         }
 
         if pos < self.fade_in_end {
             if pos < self.fade_in_start {
                 return 0.0;
             }
-            let gain = (pos - self.fade_in_start) * self.inv_fade_in_duration;
-            return sample * gain;
+            return (pos - self.fade_in_start) * self.inv_fade_in_duration;
         }
 
         if pos >= self.fade_out_end {
             return 0.0;
         }
-        let gain = 1.0 - (pos - self.fade_out_start) * self.inv_fade_out_duration;
-        sample * gain
+        1.0 - (pos - self.fade_out_start) * self.inv_fade_out_duration
+    }
+}
+
+impl Effect for FadeEffect {
+    #[inline]
+    fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+        let len = left.len().min(right.len());
+        for i in 0..len {
+            let gain = self.apply_gain(self.current_frame);
+            left[i] *= gain;
+            right[i] *= gain;
+            self.current_frame += 1.0;
+        }
     }
 
-    fn seek(&mut self, pos: Duration) {
-        let total_samples = pos.as_secs_f32() * self.sample_rate as f32 * self.channels as f32;
-        self.current_sample = total_samples;
+    fn reset(&mut self) {
+        self.current_frame = 0.0;
     }
 }

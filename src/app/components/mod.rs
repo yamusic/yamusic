@@ -9,6 +9,7 @@ mod sidebar;
 mod spinner;
 mod toast;
 mod visualizer_gpu;
+pub mod widgets;
 
 pub use sidebar::Sidebar;
 

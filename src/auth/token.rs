@@ -18,10 +18,10 @@ impl TokenProvider {
     pub fn resolve() -> Option<(String, TokenSource)> {
         dotenv::dotenv().ok();
 
-        if let Ok(token) = std::env::var("YANDEX_MUSIC_TOKEN") {
-            if !token.is_empty() {
-                return Some((token, TokenSource::Environment));
-            }
+        if let Ok(token) = std::env::var("YANDEX_MUSIC_TOKEN")
+            && !token.is_empty()
+        {
+            return Some((token, TokenSource::Environment));
         }
 
         match Self::load_from_keyring() {

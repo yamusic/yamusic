@@ -232,21 +232,21 @@ impl TrackListView {
             return Action::None;
         }
 
-        if key == &Key::Enter {
-            if let Some(_track) = self.list.selected_item() {
-                let index = self.list.selected();
-                let tracks = self.source.range(0..self.source.total().unwrap_or(0));
-                let context = if let Some(playlist) = &self.playlist {
-                    PlaybackContext::Playlist(playlist.clone())
-                } else {
-                    self.context.playback_context()
-                };
-                return Action::PlayContext {
-                    context,
-                    tracks,
-                    start_index: index,
-                };
-            }
+        if key == &Key::Enter
+            && let Some(_track) = self.list.selected_item()
+        {
+            let index = self.list.selected();
+            let tracks = self.source.range(0..self.source.total().unwrap_or(0));
+            let context = if let Some(playlist) = &self.playlist {
+                PlaybackContext::Playlist(playlist.clone())
+            } else {
+                self.context.playback_context()
+            };
+            return Action::PlayContext {
+                context,
+                tracks,
+                start_index: index,
+            };
         }
 
         Action::None

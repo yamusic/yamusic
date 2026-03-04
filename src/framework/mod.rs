@@ -1,4 +1,3 @@
-pub mod audio_bridge;
 pub mod component;
 pub mod event;
 pub mod id;
