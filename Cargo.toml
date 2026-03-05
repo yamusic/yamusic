@@ -1,10 +1,10 @@
 [package]
 authors = ["vyfor"]
 categories = ["command-line-utilities", "multimedia", "multimedia::audio"]
-description = "Yandex Music for the Terminal"
+description = "Yandex Music for the Terminal (Unofficial)"
 edition = "2024"
 keywords = ["yandex", "music", "tui", "cli", "audio-player"]
-license = "GPL-3.0-or-later"
+license = "GPL-3.0"
 name = "yamusic"
 repository = "https://github.com/yamusic/yamusic"
 version = "0.1.0"
