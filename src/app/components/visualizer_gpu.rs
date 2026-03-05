@@ -574,7 +574,6 @@ impl Widget for &Visualizer {
         };
         state.like_glow_smoothed +=
             (state.like_glow_target - state.like_glow_smoothed) * glow_lerp.min(1.0);
-        let effective_amplitude = (amplitude + state.like_glow_smoothed * 0.8).min(1.0);
 
         let target_speed = if self.is_playing.get() {
             0.8 + amplitude * 1.5
@@ -608,7 +607,7 @@ impl Widget for &Visualizer {
         {
             let mut p = state.shared_params.lock().unwrap();
             p.speed = state.smoothed_speed;
-            p.amplitude = effective_amplitude;
+            p.amplitude = amplitude;
             p.glow = state.like_glow_smoothed;
             p.bg_rgb = bg_rgb;
             p.palette = state.current_palette;
@@ -992,7 +991,9 @@ fn get_pixel_color(uv: vec2<f32>) -> vec3<f32> {
     if like_glow > 0.0 {
         let brightness = like_glow * 1.1;
         let boost_color = mix(p.bands[0].xyz, vec3<f32>(1.0, 1.0, 1.0), 0.4);
-        color = color + boost_color * brightness * (1.0 - length(uv) * 0.6);
+        let radial = clamp(length(uv), 0.0, 1.5);
+        let falloff = exp(-radial * radial * 1.5);
+        color = color + boost_color * brightness * falloff;
     }
 
     return color;
