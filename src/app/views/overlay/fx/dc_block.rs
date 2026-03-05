@@ -28,7 +28,6 @@ impl DcBlockRenderer {
             meta: EffectMeta {
                 id: "dc_block",
                 name: "DC Block",
-                icon: "󰞒",
                 description: "Removes DC offset",
                 category: EffectCategory::Utility,
                 params: vec![],
@@ -36,15 +35,7 @@ impl DcBlockRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        is_enabled: bool,
-        accent: Color,
-        _muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, is_enabled: bool, accent: Color) {
         if area.width < 20 || area.height < 10 {
             return;
         }

@@ -34,7 +34,6 @@ impl ReverbRenderer {
             meta: EffectMeta {
                 id: "reverb",
                 name: "Reverb",
-                icon: "󰕾",
                 description: "Reverb",
                 category: EffectCategory::Spatial,
                 params: vec![
@@ -75,15 +74,7 @@ impl ReverbRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        _muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color) {
         if area.width < 20 || area.height < 12 {
             return;
         }

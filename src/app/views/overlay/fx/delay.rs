@@ -38,7 +38,6 @@ impl DelayRenderer {
             meta: EffectMeta {
                 id: "delay",
                 name: "Delay",
-                icon: "󱦰",
                 description: "Stereo delay",
                 category: EffectCategory::Spatial,
                 params: vec![
@@ -79,15 +78,7 @@ impl DelayRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color, muted: Color) {
         if area.width < 20 || area.height < 7 {
             return;
         }

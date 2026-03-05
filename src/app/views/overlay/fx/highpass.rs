@@ -31,7 +31,6 @@ impl HighpassRenderer {
             meta: EffectMeta {
                 id: "highpass",
                 name: "Highpass",
-                icon: "󰘾",
                 description: "Isolates high frequencies",
                 category: EffectCategory::Filter,
                 params: vec![
@@ -56,15 +55,7 @@ impl HighpassRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        _muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color) {
         if area.width < 10 || area.height < 6 {
             return;
         }

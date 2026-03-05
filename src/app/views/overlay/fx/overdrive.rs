@@ -28,7 +28,6 @@ impl OverdriveRenderer {
             meta: EffectMeta {
                 id: "overdrive",
                 name: "Overdrive",
-                icon: "󱐋",
                 description: "Warm saturation",
                 category: EffectCategory::Distortion,
                 params: vec![
@@ -61,15 +60,7 @@ impl OverdriveRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color, muted: Color) {
         if area.width < 20 || area.height < 10 {
             return;
         }

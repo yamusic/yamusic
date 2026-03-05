@@ -5,11 +5,13 @@ use crate::app::components::widgets::eq_graph::EqBand;
 
 use super::base::{EffectCategory, EffectMeta, ParamMeta};
 
-const EQ_BANDS: [f32; 10] = [
-    32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
+const EQ_BANDS: [f32; 15] = [
+    25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0,
+    10000.0, 16000.0,
 ];
-const EQ_NAMES: [&str; 10] = [
-    "32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k",
+const EQ_NAMES: [&str; 15] = [
+    "25", "40", "63", "100", "160", "250", "400", "630", "1k", "1.6k", "2.5k", "4k", "6.3k", "10k",
+    "16k",
 ];
 
 pub struct EqRenderer {
@@ -22,8 +24,7 @@ impl EqRenderer {
             meta: EffectMeta {
                 id: "eq",
                 name: "EQ",
-                icon: "󰓃",
-                description: "10-band parametric equalizer",
+                description: "15-band parametric equalizer",
                 category: EffectCategory::Eq,
                 params: EQ_NAMES
                     .iter()

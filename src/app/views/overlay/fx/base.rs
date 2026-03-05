@@ -4,7 +4,6 @@ use ratatui::style::Color;
 pub struct EffectMeta {
     pub id: &'static str,
     pub name: &'static str,
-    pub icon: &'static str,
     pub description: &'static str,
     pub category: EffectCategory,
     pub params: Vec<ParamMeta>,

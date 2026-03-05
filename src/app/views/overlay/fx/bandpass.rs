@@ -24,7 +24,6 @@ impl BandpassRenderer {
             meta: EffectMeta {
                 id: "bandpass",
                 name: "Bandpass",
-                icon: "󰺢",
                 description: "Isolates a frequency band",
                 category: EffectCategory::Filter,
                 params: vec![
@@ -49,15 +48,7 @@ impl BandpassRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        _muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color) {
         if area.width < 10 || area.height < 6 {
             return;
         }

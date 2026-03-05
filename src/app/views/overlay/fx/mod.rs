@@ -55,6 +55,8 @@ const FX_PANEL_HEIGHT: u16 = 11;
 const DELAY_PANEL_HEIGHT: u16 = 7;
 const REVERB_PANEL_HEIGHT: u16 = 33;
 
+const EQ_TOTAL_BANDS: usize = 15;
+
 enum EffectRenderer {
     Eq(EqRenderer),
     Reverb(ReverbRenderer),
@@ -364,7 +366,7 @@ impl EffectsOverlay {
                 Action::Redraw
             }
             Key::Right | Key::Char('l') => {
-                self.eq_band_cursor = (self.eq_band_cursor + 1).min(9);
+                self.eq_band_cursor = (self.eq_band_cursor + 1).min(EQ_TOTAL_BANDS - 1);
                 Action::Redraw
             }
             Key::Up | Key::Char('k') => {
@@ -571,9 +573,10 @@ impl EffectsOverlay {
         let header = vec![
             Line::from(vec![
                 Span::styled(
-                    format!(" {} ", effect.icon),
+                    format!("{}", effect.category.icon()),
                     Style::default().fg(cat_color).add_modifier(Modifier::BOLD),
                 ),
+                Span::raw("  "),
                 Span::styled(
                     effect.name,
                     Style::default().fg(text).add_modifier(Modifier::BOLD),
@@ -667,32 +670,16 @@ impl EffectsOverlay {
 
         if let Some(renderer) = self.current_renderer() {
             match renderer {
-                EffectRenderer::Reverb(r) => {
-                    r.render(frame, visual_area, vals, accent, muted, text)
-                }
-                EffectRenderer::Delay(r) => r.render(frame, visual_area, vals, accent, muted, text),
-                EffectRenderer::Chorus(r) => {
-                    r.render(frame, visual_area, vals, accent, muted, text)
-                }
-                EffectRenderer::Compressor(r) => {
-                    r.render(frame, visual_area, vals, accent, muted, text)
-                }
-                EffectRenderer::Overdrive(r) => {
-                    r.render(frame, visual_area, vals, accent, muted, text)
-                }
-                EffectRenderer::DcBlock(r) => {
-                    r.render(frame, visual_area, enabled, accent, muted, text)
-                }
-                EffectRenderer::Lowpass(r) => {
-                    r.render(frame, visual_area, vals, accent, muted, text)
-                }
-                EffectRenderer::Highpass(r) => {
-                    r.render(frame, visual_area, vals, accent, muted, text)
-                }
-                EffectRenderer::Bandpass(r) => {
-                    r.render(frame, visual_area, vals, accent, muted, text)
-                }
-                EffectRenderer::Notch(r) => r.render(frame, visual_area, vals, accent, muted, text),
+                EffectRenderer::Reverb(r) => r.render(frame, visual_area, vals, accent),
+                EffectRenderer::Delay(r) => r.render(frame, visual_area, vals, accent, muted),
+                EffectRenderer::Chorus(r) => r.render(frame, visual_area, vals, accent, muted),
+                EffectRenderer::Compressor(r) => r.render(frame, visual_area, vals, accent, muted),
+                EffectRenderer::Overdrive(r) => r.render(frame, visual_area, vals, accent, muted),
+                EffectRenderer::DcBlock(r) => r.render(frame, visual_area, enabled, accent),
+                EffectRenderer::Lowpass(r) => r.render(frame, visual_area, vals, accent),
+                EffectRenderer::Highpass(r) => r.render(frame, visual_area, vals, accent),
+                EffectRenderer::Bandpass(r) => r.render(frame, visual_area, vals, accent),
+                EffectRenderer::Notch(r) => r.render(frame, visual_area, vals, accent),
                 _ => {}
             }
         }

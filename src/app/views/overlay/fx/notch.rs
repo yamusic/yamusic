@@ -24,7 +24,6 @@ impl NotchRenderer {
             meta: EffectMeta {
                 id: "notch",
                 name: "Notch",
-                icon: "󰸱",
                 description: "Removes a narrow frequency band",
                 category: EffectCategory::Filter,
                 params: vec![
@@ -49,15 +48,7 @@ impl NotchRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        _muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color) {
         if area.width < 10 || area.height < 6 {
             return;
         }

@@ -188,7 +188,7 @@ impl EqGraph {
 
             for (i, band) in self.bands.iter().enumerate() {
                 let col = (col_spacing / 2) + i * col_spacing;
-                let label = format_freq(band.freq);
+                let label = &band.label;
                 let label_start = col.saturating_sub(label.len() / 2);
 
                 if label_start > last_end {
@@ -211,13 +211,5 @@ impl EqGraph {
                 Rect::new(area.x, freq_y, area.width, 1),
             );
         }
-    }
-}
-
-fn format_freq(f: f32) -> String {
-    if f >= 1000.0 {
-        format!("{}k", (f / 1000.0) as u32)
-    } else {
-        format!("{}", f as u32)
     }
 }

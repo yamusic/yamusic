@@ -35,7 +35,6 @@ impl ChorusRenderer {
             meta: EffectMeta {
                 id: "chorus",
                 name: "Chorus",
-                icon: "󰝚",
                 description: "Modulated delay",
                 category: EffectCategory::Modulation,
                 params: vec![
@@ -68,15 +67,7 @@ impl ChorusRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        muted: Color,
-        _text: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color, muted: Color) {
         if area.width < 20 || area.height < 8 {
             return;
         }

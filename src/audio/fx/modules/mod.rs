@@ -14,7 +14,7 @@ pub use chorus::ChorusEffect;
 pub use compressor::CompressorEffect;
 pub use dc_block::DcBlockEffect;
 pub use delay::StereoDelayEffect;
-pub use eq::{EQ_FREQUENCIES, TenBandEq};
+pub use eq::{EQ_FREQUENCIES, Equalizer};
 pub use fade::FadeEffect;
 pub use monitor::MonitorEffect;
 pub use overdrive::OverdriveEffect;
@@ -236,10 +236,10 @@ pub fn dc_block(sample_rate: f32) -> (Box<dyn Effect>, Arc<EffectParams>) {
     (effect, params)
 }
 
-pub fn ten_band_eq(sample_rate: f32) -> (Box<dyn Effect>, Arc<EffectParams>) {
-    let names: [&str; 10] = [
-        "32 Hz", "64 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz",
-        "16 kHz",
+pub fn eq(sample_rate: f32) -> (Box<dyn Effect>, Arc<EffectParams>) {
+    let names: [&str; 15] = [
+        "25 Hz", "40 Hz", "63 Hz", "100 Hz", "160 Hz", "250 Hz", "400 Hz", "630 Hz", "1 kHz",
+        "1.6 kHz", "2.5 kHz", "4 kHz", "6.3 kHz", "10 kHz", "16 kHz",
     ];
     let info: Vec<ParamInfo> = names
         .iter()
@@ -251,7 +251,7 @@ pub fn ten_band_eq(sample_rate: f32) -> (Box<dyn Effect>, Arc<EffectParams>) {
         })
         .collect();
     let params = Arc::new(EffectParams::new(&info));
-    let effect = Box::new(TenBandEq::new(params.clone(), sample_rate));
+    let effect = Box::new(Equalizer::new(params.clone(), sample_rate));
     (effect, params)
 }
 

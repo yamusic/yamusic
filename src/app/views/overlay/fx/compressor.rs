@@ -37,7 +37,6 @@ impl CompressorRenderer {
             meta: EffectMeta {
                 id: "compressor",
                 name: "Compressor",
-                icon: "󰜎",
                 description: "Tames peaks and amplifies quiet sounds",
                 category: EffectCategory::Dynamics,
                 params: vec![
@@ -78,15 +77,7 @@ impl CompressorRenderer {
         }
     }
 
-    pub fn render(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        vals: &[f32],
-        accent: Color,
-        muted: Color,
-        _: Color,
-    ) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, vals: &[f32], accent: Color, muted: Color) {
         if area.width < 20 || area.height < 10 {
             return;
         }

@@ -4,18 +4,19 @@ use crate::audio::fx::biquad::StereoBiquad;
 use crate::audio::fx::param::EffectParams;
 use std::sync::Arc;
 
-pub struct TenBandEq {
+pub struct Equalizer {
     params: Arc<EffectParams>,
-    bands: [StereoBiquad; 10],
+    bands: [StereoBiquad; 15],
     sample_rate: f32,
 }
 
-pub const EQ_FREQUENCIES: [f32; 10] = [
-    32.0, 64.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0,
+pub const EQ_FREQUENCIES: [f32; 15] = [
+    25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0,
+    10000.0, 16000.0,
 ];
 const EQ_Q: f32 = 1.0;
 
-impl TenBandEq {
+impl Equalizer {
     pub fn new(params: Arc<EffectParams>, sample_rate: f32) -> Self {
         Self {
             params,
@@ -25,7 +26,7 @@ impl TenBandEq {
     }
 }
 
-impl Effect for TenBandEq {
+impl Effect for Equalizer {
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         for (i, biquad) in self.bands.iter_mut().enumerate() {
             let gain_db = self.params.get(i);

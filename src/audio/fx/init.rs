@@ -4,8 +4,8 @@ use rodio::Source;
 pub fn init_all<T: Source<Item = f32> + Send + 'static>(source: &mut FxSource<T>) {
     let sr = source.sample_rate().get() as f32;
 
-    let fx = ten_band_eq(sr);
-    source.add_effect("eq", "10-Band EQ", fx.0, fx.1);
+    let fx = eq(sr);
+    source.add_effect("eq", "Equalizer", fx.0, fx.1);
 
     let fx = chorus(sr);
     source.add_effect("chorus", "Chorus", fx.0, fx.1);
