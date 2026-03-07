@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
 use crate::framework::theme::{ThemeColor, global_theme};
@@ -59,6 +59,7 @@ impl LoginColors {
 #[derive(PartialEq, Eq)]
 enum Focus {
     TokenInput,
+    ShowButton,
     SubmitButton,
 }
 
@@ -218,6 +219,10 @@ impl LoginScreen {
                     KeyAction::None
                 }
                 KeyCode::Tab | KeyCode::Down => {
+                    self.focus = Focus::ShowButton;
+                    KeyAction::None
+                }
+                KeyCode::BackTab | KeyCode::Up => {
                     self.focus = Focus::SubmitButton;
                     KeyAction::None
                 }
@@ -225,9 +230,30 @@ impl LoginScreen {
                 KeyCode::Esc => KeyAction::Quit,
                 _ => KeyAction::None,
             },
-            Focus::SubmitButton => match key.code {
-                KeyCode::Tab | KeyCode::Up | KeyCode::BackTab => {
+            Focus::ShowButton => match key.code {
+                KeyCode::Tab | KeyCode::Down | KeyCode::Right => {
+                    self.focus = Focus::SubmitButton;
+                    KeyAction::None
+                }
+                KeyCode::Up | KeyCode::BackTab | KeyCode::Left => {
                     self.focus = Focus::TokenInput;
+                    KeyAction::None
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    self.show_token = !self.show_token;
+                    self.error_message = None;
+                    KeyAction::None
+                }
+                KeyCode::Esc => KeyAction::Quit,
+                _ => KeyAction::None,
+            },
+            Focus::SubmitButton => match key.code {
+                KeyCode::Down | KeyCode::Right | KeyCode::Tab => {
+                    self.focus = Focus::TokenInput;
+                    KeyAction::None
+                }
+                KeyCode::Up | KeyCode::Left | KeyCode::BackTab => {
+                    self.focus = Focus::ShowButton;
                     KeyAction::None
                 }
                 KeyCode::Enter | KeyCode::Char(' ') => KeyAction::Submit,
@@ -369,12 +395,7 @@ impl LoginScreen {
         } else if self.show_token {
             self.token_input.clone()
         } else {
-            let len = self.token_input.len();
-            if len <= 4 {
-                "•".repeat(len)
-            } else {
-                format!("{}{}", "•".repeat(len - 4), &self.token_input[len - 4..])
-            }
+            "•".repeat(self.token_input.chars().count())
         };
 
         let style = if self.token_input.is_empty() && !is_focused {
@@ -421,59 +442,129 @@ impl LoginScreen {
     }
 
     fn render_button(&self, frame: &mut Frame, area: Rect, c: &LoginColors) {
-        let is_focused = self.focus == Focus::SubmitButton;
-        let btn_width = 20u16.min(area.width);
+        let spacing = 2u16;
+        let max_btn_width = 20u16;
 
-        let btn_area = Rect::new(
-            area.x + (area.width.saturating_sub(btn_width)) / 2,
-            area.y,
-            btn_width,
-            1,
-        );
+        let btn_width = ((area.width.saturating_sub(spacing)) / 2).min(max_btn_width);
 
-        let (fg, bg, modifier) = if is_focused {
+        let total_width = btn_width.saturating_mul(2).saturating_add(spacing);
+
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(total_width),
+                Constraint::Min(0),
+            ])
+            .split(area);
+
+        let middle = cols[1];
+
+        let parts = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(btn_width),
+                Constraint::Length(spacing),
+                Constraint::Length(btn_width),
+            ])
+            .split(middle);
+
+        let show_area = parts[0];
+        let sign_area = parts[2];
+        let is_show_focused = self.focus == Focus::ShowButton;
+        let (sfg, sbg, smod) = if is_show_focused {
+            (c.bg, c.accent, Modifier::BOLD)
+        } else {
+            (c.fg, c.bg, Modifier::empty())
+        };
+
+        let show_label = if self.show_token {
+            "Hide token"
+        } else {
+            "Show token"
+        };
+        let show_btn = Paragraph::new(Line::from(vec![Span::styled(
+            format!(" {} ", show_label),
+            Style::default().fg(sfg).bg(sbg).add_modifier(smod),
+        )]))
+        .alignment(Alignment::Center);
+        frame.render_widget(show_btn, show_area);
+
+        let is_submit_focused = self.focus == Focus::SubmitButton;
+        let (fg, bg, modifier) = if is_submit_focused {
             (c.bg, c.accent, Modifier::BOLD)
         } else {
             (c.fg, c.bg, Modifier::empty())
         };
 
         let btn = Paragraph::new(Line::from(vec![Span::styled(
-            "  Sign In →  ",
+            " Sign In → ",
             Style::default().fg(fg).bg(bg).add_modifier(modifier),
         )]))
         .alignment(Alignment::Center);
 
-        frame.render_widget(btn, btn_area);
+        frame.render_widget(btn, sign_area);
     }
 
     fn render_hints(&self, frame: &mut Frame, area: Rect, c: &LoginColors) {
-        let hints = Line::from(vec![
-            Span::styled(
+        let parts = vec![
+            (
                 "  Tab",
-                Style::default()
-                    .fg(c.accent_dim)
-                    .add_modifier(Modifier::BOLD),
+                Some(
+                    Style::default()
+                        .fg(c.accent_dim)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ),
-            Span::styled(" navigate  ", Style::default().fg(c.fg_muted)),
-            Span::styled(
+            (" navigate  ", Some(Style::default().fg(c.fg_muted))),
+            (
                 "Enter",
-                Style::default()
-                    .fg(c.accent_dim)
-                    .add_modifier(Modifier::BOLD),
+                Some(
+                    Style::default()
+                        .fg(c.accent_dim)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ),
-            Span::styled(" submit  ", Style::default().fg(c.fg_muted)),
-            Span::styled(
+            (" submit  ", Some(Style::default().fg(c.fg_muted))),
+            (
                 "Esc",
-                Style::default()
-                    .fg(c.accent_dim)
-                    .add_modifier(Modifier::BOLD),
+                Some(
+                    Style::default()
+                        .fg(c.accent_dim)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ),
-            Span::styled(" quit", Style::default().fg(c.fg_muted)),
-        ]);
-        let p = Paragraph::new(hints)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(p, area);
+            (" quit", Some(Style::default().fg(c.fg_muted))),
+        ];
+
+        let hint_text: String = parts
+            .iter()
+            .map(|(s, _)| *s)
+            .collect::<Vec<&str>>()
+            .join("");
+        let hint_width = hint_text.chars().count().min(area.width as usize) as u16;
+
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(hint_width),
+                Constraint::Min(0),
+            ])
+            .split(area);
+
+        let middle = cols[1];
+
+        let spans: Vec<Span> = parts
+            .into_iter()
+            .map(|(s, style)| match style {
+                Some(st) => Span::styled(s, st),
+                None => Span::raw(s),
+            })
+            .collect();
+
+        let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
+        frame.render_widget(p, middle);
     }
 }
 
