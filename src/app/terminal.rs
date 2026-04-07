@@ -140,6 +140,12 @@ impl Terminal {
     }
 
     pub fn enter(&mut self) -> Result<()> {
+        self.init()?;
+        self.start();
+        Ok(())
+    }
+
+    pub fn init(&mut self) -> Result<()> {
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(std::io::stdout(), EnterAlternateScreen, cursor::Hide)?;
         if self.mouse {
@@ -149,7 +155,6 @@ impl Terminal {
             crossterm::execute!(std::io::stdout(), EnableBracketedPaste)?;
         }
         crossterm::execute!(std::io::stdout(), EnableFocusChange)?;
-        self.start();
         Ok(())
     }
 

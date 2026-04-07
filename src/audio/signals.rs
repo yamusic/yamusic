@@ -15,6 +15,7 @@ pub struct AudioSignals {
     pub is_buffering: Signal<bool>,
     pub current_track: Signal<Option<Track>>,
     pub current_track_id: Signal<Option<String>>,
+    pub current_cover_url: Signal<Option<String>>,
     pub track_title: Signal<Option<String>>,
     pub track_artists: Signal<Option<String>>,
     pub position_ms: Signal<u64>,
@@ -42,6 +43,7 @@ impl AudioSignals {
             is_buffering: Signal::new(false),
             current_track: Signal::new(None),
             current_track_id: Signal::new(None),
+            current_cover_url: Signal::new(None),
             track_title: Signal::new(None),
             track_artists: Signal::new(None),
             position_ms: Signal::new(0),
@@ -73,6 +75,19 @@ impl AudioSignals {
                     .join(", "),
             ));
             self.current_track_id.set(Some(t.id.clone()));
+            self.current_cover_url.set(
+                t.cover_uri
+                    .as_ref()
+                    .or_else(|| t.albums.first().and_then(|a| a.cover_uri.as_ref()))
+                    .map(|uri| {
+                        let uri = uri.replace("%%", "400x400");
+                        if uri.starts_with("http") {
+                            uri
+                        } else {
+                            format!("https://{}", uri)
+                        }
+                    }),
+            );
 
             if let Some(duration) = t.duration {
                 self.duration_ms.set(duration.as_millis() as u64);
@@ -82,6 +97,7 @@ impl AudioSignals {
             self.track_title.set(None);
             self.track_artists.set(None);
             self.current_track_id.set(None);
+            self.current_cover_url.set(None);
             self.duration_ms.set(0);
             self.is_stopped.set(true);
         }

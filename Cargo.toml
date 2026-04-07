@@ -65,6 +65,8 @@ pollster = "0.4"
 im = "15.1.0"
 arc-swap = "1"
 nucleo-matcher = "0.3.1"
+ratatui-image = "10.0.6"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 
 [features]
 nightly = []

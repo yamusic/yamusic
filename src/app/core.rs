@@ -1,5 +1,7 @@
 use std::{io::Write, sync::Arc};
 
+use ratatui_image::picker::Picker;
+
 use flume::{Receiver, Sender};
 use ratatui::{
     Frame,
@@ -134,6 +136,7 @@ impl App {
             is_muted: signals.audio.is_muted.clone(),
             is_shuffled: signals.audio.is_shuffled.clone(),
             repeat_mode: signals.audio.repeat_mode.clone(),
+            cover_url: signals.audio.current_cover_url.clone(),
         };
         let player_bar = PlayerBar::new(player_signals, theme_styles.clone());
 
@@ -1225,7 +1228,7 @@ impl App {
 
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .constraints([Constraint::Min(0), Constraint::Length(5)])
             .split(area);
 
         let content_area = if self.sidebar_visible {
@@ -1306,7 +1309,12 @@ fn is_top_level(route: &Route) -> bool {
 impl App {
     pub async fn run(&mut self) -> color_eyre::Result<()> {
         let mut terminal = Terminal::new()?;
-        terminal.enter()?;
+        terminal.init()?;
+
+        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        self.player_bar.set_picker(picker);
+
+        terminal.start();
 
         let tick_tx = terminal.tick_tx.clone();
         let current_route = self.signals.navigation.current_route.clone();

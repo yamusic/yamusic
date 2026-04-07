@@ -1,16 +1,26 @@
+use image::DynamicImage;
 use ratatui::{
     Frame,
     buffer::Buffer,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Style, Stylize},
+    layout::Rect,
+    style::{Color, Modifier, Style},
     symbols::{self, border},
-    text::{Line, Span, ToSpan},
-    widgets::{Block, Borders, Gauge, Paragraph, Widget},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Widget},
+};
+use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use crate::{
     audio::enums::RepeatMode,
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::{
+        reactive::{Resource, ResourceState, effect},
+        signals::Signal,
+        theme::ThemeStyles,
+    },
 };
 
 pub struct PlayerSignals {
@@ -26,6 +36,7 @@ pub struct PlayerSignals {
     pub is_muted: Signal<bool>,
     pub is_shuffled: Signal<bool>,
     pub repeat_mode: Signal<RepeatMode>,
+    pub cover_url: Signal<Option<String>>,
 }
 
 impl PlayerSignals {
@@ -43,6 +54,7 @@ impl PlayerSignals {
             is_muted: Signal::new(false),
             is_shuffled: Signal::new(false),
             repeat_mode: Signal::new(RepeatMode::None),
+            cover_url: Signal::new(None),
         }
     }
 }
@@ -56,210 +68,443 @@ impl Default for PlayerSignals {
 pub struct PlayerBar {
     signals: PlayerSignals,
     theme: Signal<ThemeStyles>,
+    picker: Option<Picker>,
+    protocol: Option<StatefulProtocol>,
+    cover_art: Resource<Option<Arc<DynamicImage>>>,
+    last_art: Option<Arc<DynamicImage>>,
+    last_volume: u8,
+    last_muted: bool,
+    last_volume_change_at: Option<Instant>,
 }
 
 impl PlayerBar {
     pub fn new(signals: PlayerSignals, theme: Signal<ThemeStyles>) -> Self {
-        Self { signals, theme }
+        let cover_url = signals.cover_url.clone();
+        let cover_art = Resource::new({
+            let cover_url = cover_url.clone();
+            move || {
+                let cover_url = cover_url.clone();
+                async move {
+                    let Some(url) = cover_url.get() else {
+                        return Ok(None);
+                    };
+
+                    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
+                    if !response.status().is_success() {
+                        return Ok(None);
+                    }
+
+                    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+                    let image = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+                    Ok(Some(Arc::new(image)))
+                }
+            }
+        });
+
+        effect({
+            let cover_url = signals.cover_url.clone();
+            let cover_art = cover_art.clone();
+            move || {
+                let _ = cover_url.get();
+                cover_art.refetch();
+            }
+        });
+
+        Self {
+            signals,
+            theme,
+            picker: None,
+            protocol: None,
+            cover_art,
+            last_art: None,
+            last_volume: 0,
+            last_muted: false,
+            last_volume_change_at: None,
+        }
     }
 
-    pub fn view(&self, frame: &mut Frame, area: Rect) {
+    pub fn set_picker(&mut self, picker: Picker) {
+        self.picker = Some(picker);
+    }
+
+    pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let styles = self.theme.get();
 
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(10), Constraint::Length(19)])
-            .split(area);
-
-        let progress_widget = ProgressWidget {
-            position_ms: self.signals.position_ms.get(),
-            duration_ms: self.signals.duration_ms.get(),
-            buffered_ratio: self.signals.buffered_ratio.get(),
-            track_title: self.signals.track_title.get(),
-            track_artist: self.signals.track_artists.get(),
-            is_playing: self.signals.is_playing.get(),
-            styles: styles.clone(),
+        let current_art = match self.cover_art.get() {
+            ResourceState::Ready(image) | ResourceState::Stale(image) => image,
+            ResourceState::Loading | ResourceState::Error(_) | ResourceState::Idle => None,
         };
-        frame.render_widget(progress_widget, layout[0]);
-
-        let controls_widget = ControlsWidget {
-            repeat_mode: self.signals.repeat_mode.get(),
-            shuffle_mode: self.signals.is_shuffled.get(),
-            is_liked: self.signals.is_liked.get(),
-            is_disliked: self.signals.is_disliked.get(),
-            volume: self.signals.volume.get(),
-            styles,
+        let art_changed = match (&self.last_art, &current_art) {
+            (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
+            (None, None) => false,
+            _ => true,
         };
-        frame.render_widget(controls_widget, layout[1]);
-    }
-}
-
-struct ProgressWidget {
-    position_ms: u64,
-    duration_ms: u64,
-    buffered_ratio: f32,
-    track_title: Option<String>,
-    track_artist: Option<String>,
-    is_playing: bool,
-    styles: ThemeStyles,
-}
-
-impl Widget for ProgressWidget {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let (current, total) = (self.position_ms, self.duration_ms);
-        let percent = if total > 0 {
-            current as f64 / total as f64
-        } else {
-            0.0
-        };
-
-        let play_icon = if self.is_playing { "" } else { "" };
-        let mut track_info = format!(
-            "{}  {}",
-            play_icon,
-            self.track_title.as_deref().unwrap_or("No track"),
-        );
-        if let Some(artist) = self.track_artist {
-            track_info = format!("{track_info} by {artist}");
+        if art_changed {
+            self.protocol = None;
+            if let (Some(picker), Some(art)) = (&mut self.picker, &current_art) {
+                self.protocol = Some(picker.new_resize_protocol((**art).clone()));
+            }
+            self.last_art = current_art;
         }
 
-        let duration_info = format!("{} / {}", format_duration(current), format_duration(total));
-
-        let buffered_ratio = self.buffered_ratio as f64;
-
-        let gauge = CustomGauge::default()
-            .block(
-                Block::default()
-                    .title_top(
-                        ratatui::text::Line::from(ratatui::text::Span::styled(
-                            track_info,
-                            self.styles.text,
-                        ))
-                        .alignment(Alignment::Center),
-                    )
-                    .borders(Borders::ALL)
-                    .border_style(self.styles.block_focused)
-                    .border_set(border::Set {
-                        top_right: symbols::line::ROUNDED.horizontal_down,
-                        bottom_right: symbols::line::ROUNDED.horizontal_up,
-                        ..symbols::border::ROUNDED
-                    }),
-            )
-            .ratios(percent.min(1.0), buffered_ratio.min(1.0))
-            .label(
-                duration_info
-                    .to_span()
-                    .fg(self.styles.text.fg.unwrap_or_default()),
-            )
-            .played_style(self.styles.progress_fg)
-            .buffered_style(self.styles.progress_bg)
-            .remaining_style(
-                Style::default()
-                    .fg(self.styles.text.bg.unwrap_or_default())
-                    .bg(self.styles.text.bg.unwrap_or_default()),
-            )
-            .use_unicode(true);
-
-        gauge.render(area, buf);
-    }
-}
-
-struct ControlsWidget {
-    repeat_mode: RepeatMode,
-    shuffle_mode: bool,
-    is_liked: bool,
-    is_disliked: bool,
-    volume: u8,
-    styles: ThemeStyles,
-}
-
-impl Widget for ControlsWidget {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let repeat_icon = match self.repeat_mode {
-            RepeatMode::None => "󰑗".fg(self.styles.text_muted.fg.unwrap_or_default()),
-            RepeatMode::Single => "󰑘".fg(self.styles.accent.fg.unwrap_or_default()),
-            RepeatMode::All => "󰑖".fg(self.styles.accent.fg.unwrap_or_default()),
-        };
-        let shuffle_icon = if self.shuffle_mode {
-            "󰒟".fg(self.styles.accent.fg.unwrap_or_default())
-        } else {
-            "󰒞".fg(self.styles.text_muted.fg.unwrap_or_default())
-        };
-
-        let heart_icon = if self.is_liked {
-            "󰋑".fg(self.styles.accent.fg.unwrap_or_default())
-        } else if self.is_disliked {
-            "󰋖".fg(self.styles.text_muted.fg.unwrap_or_default())
-        } else {
-            "󰋕".fg(self.styles.text_muted.fg.unwrap_or_default())
-        };
-
-        let mut controls_text = Line::default();
-        controls_text.push_span(heart_icon);
-        controls_text.push_span("  ");
-        controls_text.push_span(repeat_icon);
-        controls_text.push_span("  ");
-        controls_text.push_span(shuffle_icon);
-
-        let volume_text = format!("{}%", self.volume);
-        let mut volume_text = volume_text.to_span();
-
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(9), Constraint::Length(12)])
-            .split(area);
-
-        let controls_block = Block::default()
-            .borders(Borders::TOP | Borders::BOTTOM)
-            .border_style(self.styles.block_focused)
-            .border_set(border::Set {
-                top_left: symbols::line::ROUNDED.horizontal_down,
-                top_right: symbols::line::ROUNDED.horizontal_down,
-                bottom_left: symbols::line::ROUNDED.horizontal_up,
-                bottom_right: symbols::line::ROUNDED.horizontal_up,
-                ..symbols::border::ROUNDED
-            });
-        let controls = Paragraph::new(controls_text)
-            .block(controls_block)
-            .centered();
-        controls.render(layout[0], buf);
-
-        let (volume, volume_fg, fg, bg) = if self.volume <= 100 {
-            (
-                self.volume as f64 / 100.0,
-                None,
-                self.styles.accent.fg.unwrap_or_default(),
-                self.styles.text.bg.unwrap_or_default(),
-            )
-        } else {
-            (
-                (self.volume - 100) as f64 / 100.0,
-                Some(self.styles.text_muted.fg.unwrap_or_default()),
-                self.styles.progress_fg.fg.unwrap_or_default(),
-                self.styles.progress_fg.fg.unwrap_or_default(),
-            )
-        };
-
-        if let Some(fg) = volume_fg {
-            volume_text = volume_text.fg(fg);
-        }
-
-        let volume_block = Block::default()
+        let outer_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(self.styles.block_focused)
-            .border_set(border::Set {
-                top_left: symbols::line::ROUNDED.horizontal_down,
-                bottom_left: symbols::line::ROUNDED.horizontal_up,
-                ..symbols::border::ROUNDED
-            });
+            .border_set(border::ROUNDED)
+            .border_style(styles.block_focused);
+        let inner = outer_block.inner(area);
+        frame.render_widget(outer_block, area);
 
-        let volume_gauge = Gauge::default()
-            .block(volume_block)
-            .gauge_style(Style::new().fg(fg).bg(bg))
-            .ratio(volume)
-            .label(volume_text);
+        if inner.height < 3 || inner.width < 12 {
+            return;
+        }
 
-        volume_gauge.render(layout[1], buf);
+        let img_w = inner.height.saturating_mul(2).min(inner.width / 4);
+        let text_x = inner.x + img_w + 1;
+        let text_aw = inner.width.saturating_sub(img_w + 1);
+        let left_w = (text_aw / 4).max(12).min(text_aw);
+
+        let row0_y = inner.y;
+        let row1_y = inner.y + 1;
+        let row2_y = inner.y + inner.height - 1;
+
+        if img_w > 0 {
+            if let Some(proto) = &mut self.protocol {
+                frame.render_stateful_widget(
+                    StatefulImage::new(),
+                    Rect {
+                        x: inner.x,
+                        y: inner.y,
+                        width: img_w,
+                        height: inner.height,
+                    },
+                    proto,
+                );
+            }
+        }
+
+        {
+            let title = self
+                .signals
+                .track_title
+                .get()
+                .unwrap_or_else(|| "No track".into());
+
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    title,
+                    styles.text.add_modifier(Modifier::BOLD),
+                )),
+                Rect {
+                    x: text_x,
+                    y: row0_y,
+                    width: left_w,
+                    height: 1,
+                },
+            );
+        }
+
+        {
+            let artist = self.signals.track_artists.get().unwrap_or_default();
+            frame.render_widget(
+                Paragraph::new(Span::styled(artist, styles.text_muted)),
+                Rect {
+                    x: text_x,
+                    y: row1_y,
+                    width: left_w,
+                    height: 1,
+                },
+            );
+
+            let vol = self.signals.volume.get();
+            let is_muted = self.signals.is_muted.get();
+            let now = Instant::now();
+            if vol != self.last_volume || is_muted != self.last_muted {
+                self.last_volume = vol;
+                self.last_muted = is_muted;
+                self.last_volume_change_at = Some(now);
+            }
+
+            let show_vol_popup = self
+                .last_volume_change_at
+                .is_some_and(|t| now.duration_since(t) < Duration::from_millis(1200));
+
+            let vol_compact_w: u16 = 6;
+            let show_volume = text_aw > left_w + vol_compact_w + 8;
+            let vol_w = if show_volume { vol_compact_w } else { 0 };
+            let gap_w: u16 = if show_volume { 2 } else { 0 };
+            let vol_x = text_x + text_aw.saturating_sub(vol_w + 1);
+
+            if show_volume {
+                let vol_icon = if is_muted || vol == 0 {
+                    "󰝟"
+                } else if vol < 25 {
+                    "󰕿"
+                } else if vol < 50 {
+                    "󰖀"
+                } else {
+                    "󰕾"
+                };
+
+                let popup_outer_w: u16 = 5;
+                let popup_x = (vol_x.saturating_sub(2) + vol_w / 2).saturating_add(1);
+                let icon_x = popup_x + popup_outer_w / 2;
+
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![Span::styled(vol_icon, styles.text_muted)])),
+                    Rect {
+                        x: icon_x,
+                        y: row1_y,
+                        width: vol_w,
+                        height: 1,
+                    },
+                );
+
+                if show_vol_popup {
+                    let popup_h: u16 = 6;
+                    let popup_label_h: u16 = 1;
+                    let border_pad: u16 = 1;
+
+                    let total_outer_h = popup_label_h + popup_h + border_pad * 2;
+                    let popup_bottom = area.y;
+                    let popup_y = popup_bottom.saturating_sub(total_outer_h + 1);
+
+                    let popup_block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_set(border::ROUNDED)
+                        .border_style(styles.text_muted);
+                    let outer_rect = Rect {
+                        x: popup_x,
+                        y: popup_y,
+                        width: popup_outer_w,
+                        height: total_outer_h,
+                    };
+                    let inner_rect = popup_block.inner(outer_rect);
+                    frame.render_widget(popup_block, outer_rect);
+
+                    let inner_x = inner_rect.x;
+                    let inner_y = inner_rect.y;
+                    let inner_w = inner_rect.width;
+
+                    let pct_str = if is_muted {
+                        " 󰝟 ".to_string()
+                    } else {
+                        format!("{:>2}%", vol)
+                    };
+                    frame.render_widget(
+                        Paragraph::new(Span::styled(pct_str, styles.text_muted)),
+                        Rect {
+                            x: inner_x,
+                            y: inner_y,
+                            width: inner_w,
+                            height: 1,
+                        },
+                    );
+
+                    let ratio = if is_muted {
+                        0.0_f64
+                    } else {
+                        (vol as f64 / 100.0).clamp(0.0, 1.0)
+                    };
+
+                    let total_eighths = (ratio * popup_h as f64 * 8.0).round() as u32;
+                    let full_rows = (total_eighths / 8) as u16;
+                    let partial_eighths = (total_eighths % 8) as u8;
+
+                    let partial_sym: Option<&str> = match partial_eighths {
+                        0 => None,
+                        1 => Some("▁"),
+                        2 => Some("▂"),
+                        3 => Some("▃"),
+                        4 => Some("▄"),
+                        5 => Some("▅"),
+                        6 => Some("▆"),
+                        7 => Some("▇"),
+                        _ => Some("█"),
+                    };
+
+                    let has_partial = partial_sym.is_some();
+                    let empty_rows = popup_h
+                        .saturating_sub(full_rows)
+                        .saturating_sub(if has_partial { 1 } else { 0 });
+
+                    let empty_bg = styles.text_muted.bg.unwrap_or(Color::Reset);
+
+                    let side_style = Style::default();
+                    let empty_center_style = Style::default().bg(empty_bg);
+                    let partial_style = Style::default()
+                        .fg(styles.accent.fg.unwrap_or(Color::Reset))
+                        .bg(empty_bg);
+
+                    for row in 0..popup_h {
+                        let pip_y = inner_y + popup_label_h + row;
+
+                        if row < empty_rows {
+                            frame.render_widget(
+                                Paragraph::new(Line::from(vec![
+                                    Span::styled(" ", side_style),
+                                    Span::styled(" ", empty_center_style),
+                                    Span::styled(" ", side_style),
+                                ])),
+                                Rect {
+                                    x: inner_x,
+                                    y: pip_y,
+                                    width: inner_w,
+                                    height: 1,
+                                },
+                            );
+                        } else if row == empty_rows && has_partial {
+                            let sub_char_line = Line::from(vec![
+                                Span::styled(" ", side_style),
+                                Span::styled(partial_sym.unwrap(), partial_style),
+                                Span::styled(" ", side_style),
+                            ]);
+
+                            frame.render_widget(
+                                Paragraph::new(sub_char_line),
+                                Rect {
+                                    x: inner_x,
+                                    y: pip_y,
+                                    width: inner_w,
+                                    height: 1,
+                                },
+                            );
+                        } else {
+                            frame.render_widget(
+                                Paragraph::new(Span::styled(" █ ", styles.accent)),
+                                Rect {
+                                    x: inner_x,
+                                    y: pip_y,
+                                    width: inner_w,
+                                    height: 1,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+
+            let is_playing = self.signals.is_playing.get();
+            let is_liked = self.signals.is_liked.get();
+            let is_disliked = self.signals.is_disliked.get();
+            let shuffle = self.signals.is_shuffled.get();
+            let repeat = self.signals.repeat_mode.get();
+            let accent = styles.accent;
+            let muted_sty = styles.text_muted;
+            let normal_sty = styles.text;
+
+            let sep = || Span::raw("  ");
+
+            let like_span = if is_liked {
+                Span::styled("󰋑", accent)
+            } else {
+                Span::styled("󰋕", muted_sty)
+            };
+            let dislike_span = if is_disliked {
+                Span::styled("󰝙", accent)
+            } else {
+                Span::styled("󱐴", muted_sty)
+            };
+            let shuffle_span = if shuffle {
+                Span::styled("󰒟", accent)
+            } else {
+                Span::styled("󰒞", muted_sty)
+            };
+            let prev_span = Span::styled("󰒮", normal_sty);
+            let play_span = if is_playing {
+                Span::styled("󰏤", normal_sty.add_modifier(Modifier::BOLD))
+            } else {
+                Span::styled("󰐊", normal_sty.add_modifier(Modifier::BOLD))
+            };
+            let next_span = Span::styled("󰒭", normal_sty);
+            let repeat_span = match repeat {
+                RepeatMode::None => Span::styled("󰑗", muted_sty),
+                RepeatMode::Single => Span::styled("󰑘", accent),
+                RepeatMode::All => Span::styled("󰑖", accent),
+            };
+
+            let controls = Line::from(vec![
+                like_span,
+                sep(),
+                shuffle_span,
+                sep(),
+                prev_span,
+                sep(),
+                play_span,
+                sep(),
+                next_span,
+                sep(),
+                repeat_span,
+                sep(),
+                dislike_span,
+            ]);
+
+            let controls_w = controls.width() as u16;
+            if controls_w > 0 {
+                let ideal_x = inner.x + inner.width.saturating_sub(controls_w) / 2;
+                let min_x = text_x + left_w.saturating_add(1);
+                let right_limit = if show_volume {
+                    vol_x.saturating_sub(gap_w)
+                } else {
+                    text_x + text_aw
+                };
+                let max_x = right_limit.saturating_sub(controls_w);
+                let controls_x = if max_x >= min_x {
+                    ideal_x.clamp(min_x, max_x)
+                } else {
+                    min_x
+                };
+
+                frame.render_widget(
+                    Paragraph::new(controls),
+                    Rect {
+                        x: controls_x,
+                        y: row1_y,
+                        width: controls_w,
+                        height: 1,
+                    },
+                );
+            }
+        }
+
+        {
+            let current = self.signals.position_ms.get();
+            let total = self.signals.duration_ms.get();
+            let ratio = if total > 0 {
+                (current as f64 / total as f64).min(1.0)
+            } else {
+                0.0
+            };
+            let buffered = (self.signals.buffered_ratio.get() as f64).min(1.0);
+            let prog_label = Span::styled(
+                format!(
+                    "{}  ╱  {}",
+                    format_duration(current),
+                    format_duration(total)
+                ),
+                Style::default().fg(styles.text_muted.fg.unwrap_or_default()),
+            );
+
+            frame.render_widget(
+                CustomGauge::default()
+                    .ratios(ratio, buffered)
+                    .label(prog_label)
+                    .label_center_area(inner)
+                    .played_style(styles.progress_fg)
+                    .buffered_style(styles.progress_bg)
+                    .remaining_style(
+                        Style::default()
+                            .fg(styles.text.bg.unwrap_or_default())
+                            .bg(styles.text.bg.unwrap_or_default()),
+                    )
+                    .use_unicode(true),
+                Rect {
+                    x: text_x,
+                    y: row2_y,
+                    width: text_aw,
+                    height: 1,
+                },
+            );
+        }
     }
 }
 
@@ -269,6 +514,7 @@ struct CustomGauge<'a> {
     played_ratio: f64,
     buffered_ratio: f64,
     label: Option<Span<'a>>,
+    label_center_area: Option<Rect>,
     use_unicode: bool,
     style: Style,
     played_style: Style,
@@ -277,11 +523,6 @@ struct CustomGauge<'a> {
 }
 
 impl<'a> CustomGauge<'a> {
-    fn block(mut self, block: Block<'a>) -> Self {
-        self.block = Some(block);
-        self
-    }
-
     fn ratios(mut self, played: f64, buffered: f64) -> Self {
         assert!(
             (0.0..=1.0).contains(&played),
@@ -291,17 +532,18 @@ impl<'a> CustomGauge<'a> {
             (0.0..=1.0).contains(&buffered),
             "Buffered ratio must be between 0 and 1"
         );
-
         self.played_ratio = played;
         self.buffered_ratio = buffered;
         self
     }
 
-    fn label<T>(mut self, label: T) -> Self
-    where
-        T: Into<Span<'a>>,
-    {
+    fn label<T: Into<Span<'a>>>(mut self, label: T) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    const fn label_center_area(mut self, area: Rect) -> Self {
+        self.label_center_area = Some(area);
         self
     }
 
@@ -326,6 +568,11 @@ impl<'a> CustomGauge<'a> {
     }
 
     fn render_gauge(&self, gauge_area: Rect, buf: &mut Buffer) {
+        let center_area = self.label_center_area.unwrap_or(gauge_area);
+        self.render_gauge_full(gauge_area, center_area, buf);
+    }
+
+    fn render_gauge_full(&self, gauge_area: Rect, full_area: Rect, buf: &mut Buffer) {
         if gauge_area.is_empty() {
             return;
         }
@@ -334,48 +581,38 @@ impl<'a> CustomGauge<'a> {
         let played_pos = width * self.played_ratio;
         let buffered_pos = width * self.buffered_ratio;
 
-        let label = if let Some(label) = self.label.as_ref() {
-            label
-        } else {
-            &Span::raw(format!(
-                "{}% / {}%",
-                (self.played_ratio * 100.0).round() as u16,
-                (self.buffered_ratio * 100.0).round() as u16
-            ))
-        };
-
-        let label_col = gauge_area.left() + (gauge_area.width - label.width() as u16) / 2;
+        let fallback = Span::raw(format!(
+            "{}% / {}%",
+            (self.played_ratio * 100.0).round() as u16,
+            (self.buffered_ratio * 100.0).round() as u16,
+        ));
+        let label = self.label.as_ref().unwrap_or(&fallback);
+        let lbl_w = label.width() as u16;
+        let label_col = full_area.left() + (full_area.width.saturating_sub(lbl_w)) / 2;
         let label_row = gauge_area.top() + gauge_area.height / 2;
 
         for y in gauge_area.top()..gauge_area.bottom() {
             for x in gauge_area.left()..gauge_area.right() {
-                let pos = x - gauge_area.left();
-                let pos_f64 = pos as f64;
+                let pos = (x - gauge_area.left()) as f64;
 
                 let mut symbol = symbols::block::FULL;
                 let mut style = self.remaining_style;
 
-                if pos_f64 < played_pos {
+                if pos < played_pos {
                     style = self.played_style;
-                    if self.use_unicode && pos_f64 + 1.0 > played_pos {
-                        let frac = played_pos - pos_f64;
-                        symbol = unicode_block(frac);
+                    if self.use_unicode && pos + 1.0 > played_pos {
+                        symbol = unicode_block(played_pos - pos);
                     }
-                } else if pos_f64 < buffered_pos {
+                } else if pos < buffered_pos {
                     style = self.buffered_style;
-                    if self.use_unicode && pos_f64 + 1.0 > buffered_pos {
-                        let frac = buffered_pos - pos_f64;
-                        symbol = unicode_block(frac);
+                    if self.use_unicode && pos + 1.0 > buffered_pos {
+                        symbol = unicode_block(buffered_pos - pos);
                     }
-                } else {
-                    symbol = if self.use_unicode {
-                        " "
-                    } else {
-                        symbols::block::FULL
-                    };
+                } else if self.use_unicode {
+                    symbol = " ";
                 }
 
-                if x >= label_col && x < label_col + label.width() as u16 && y == label_row {
+                if y == label_row && x >= label_col && x < label_col + lbl_w {
                     symbol = " ";
                     style = style.bg(style.fg.unwrap_or_default());
                 }
@@ -387,7 +624,7 @@ impl<'a> CustomGauge<'a> {
             }
         }
 
-        buf.set_span(label_col, label_row, label, label.width() as u16);
+        buf.set_span(label_col, label_row, label, lbl_w);
     }
 }
 
@@ -397,13 +634,10 @@ impl Widget for CustomGauge<'_> {
         if let Some(ref block) = self.block {
             block.render(area, buf);
         }
-
         let inner = self.block.as_ref().map_or(area, |b| b.inner(area));
-        if inner.is_empty() {
-            return;
+        if !inner.is_empty() {
+            self.render_gauge(inner, buf);
         }
-
-        self.render_gauge(inner, buf);
     }
 }
 
