@@ -382,6 +382,7 @@ impl ApiService {
             if let Some(rev) = revision {
                 opt = opt.revision(rev);
             }
+            opt = opt.all_values_required(true);
             opt
         };
         let opts = CollectionSyncOptions::new()
