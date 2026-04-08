@@ -18,6 +18,7 @@ use crate::{
     audio::enums::RepeatMode,
     cache::image::ImageCache,
     framework::{signals::Signal, theme::ThemeStyles},
+    util::animation::Animation,
 };
 
 pub struct PlayerSignals {
@@ -70,6 +71,111 @@ pub struct PlayerBar {
     last_volume: u8,
     last_muted: bool,
     last_volume_change_at: Option<Instant>,
+    pub animation: PlayerBarAnimation,
+}
+
+pub struct PlayerBarAnimation {
+    animated_played_ratio: f64,
+    animated_buffered_ratio: f64,
+    played_anim_from: f64,
+    played_anim_to: f64,
+    buffered_anim_from: f64,
+    buffered_anim_to: f64,
+    started_at: Option<Instant>,
+    duration: Duration,
+}
+
+impl PlayerBarAnimation {
+    pub fn new() -> Self {
+        Self {
+            animated_played_ratio: 0.0,
+            animated_buffered_ratio: 0.0,
+            played_anim_from: 0.0,
+            played_anim_to: 0.0,
+            buffered_anim_from: 0.0,
+            buffered_anim_to: 0.0,
+            started_at: None,
+            duration: Duration::from_millis(180),
+        }
+    }
+
+    fn update_state(&mut self, now: Instant) {
+        let Some(started_at) = self.started_at else {
+            return;
+        };
+
+        let duration = self.duration.as_secs_f64().max(f64::EPSILON);
+        let elapsed = now.duration_since(started_at).as_secs_f64();
+        let t = Animation::clamp01(elapsed / duration);
+        let eased_t = Animation::ease_in_out_cubic(t);
+
+        self.animated_played_ratio =
+            Animation::lerp(self.played_anim_from, self.played_anim_to, eased_t);
+        self.animated_buffered_ratio =
+            Animation::lerp(self.buffered_anim_from, self.buffered_anim_to, eased_t);
+
+        if t >= 1.0 {
+            self.animated_played_ratio = self.played_anim_to;
+            self.animated_buffered_ratio = self.buffered_anim_to;
+            self.started_at = None;
+        }
+    }
+
+    pub fn ratios(&mut self, played_target: f64, buffered_target: f64) -> (f64, f64) {
+        let now = Instant::now();
+
+        let played_target = Animation::clamp01(played_target);
+        let buffered_target = Animation::clamp01(buffered_target).max(played_target);
+
+        if self.started_at.is_none()
+            && self.played_anim_to == 0.0
+            && self.buffered_anim_to == 0.0
+            && self.animated_played_ratio == 0.0
+            && self.animated_buffered_ratio == 0.0
+        {
+            self.animated_played_ratio = played_target;
+            self.animated_buffered_ratio = buffered_target;
+            self.played_anim_from = played_target;
+            self.played_anim_to = played_target;
+            self.buffered_anim_from = buffered_target;
+            self.buffered_anim_to = buffered_target;
+            return (played_target, buffered_target);
+        }
+
+        self.update_state(now);
+
+        let current_played = self.animated_played_ratio;
+        let current_buffered = self.animated_buffered_ratio.max(current_played);
+
+        let target_changed = (played_target - self.played_anim_to).abs() > 0.001
+            || (buffered_target - self.buffered_anim_to).abs() > 0.001;
+
+        if target_changed {
+            let max_delta = (played_target - current_played)
+                .abs()
+                .max((buffered_target - current_buffered).abs());
+            let duration_ms = if max_delta >= 0.45 {
+                300
+            } else if max_delta >= 0.2 {
+                220
+            } else {
+                160
+            };
+
+            self.played_anim_from = current_played;
+            self.played_anim_to = played_target;
+            self.buffered_anim_from = current_buffered;
+            self.buffered_anim_to = buffered_target;
+            self.duration = Duration::from_millis(duration_ms);
+            self.started_at = Some(now);
+
+            self.update_state(now);
+        }
+
+        let played = Animation::clamp01(self.animated_played_ratio);
+        let buffered = Animation::clamp01(self.animated_buffered_ratio.max(played));
+        (played, buffered)
+    }
 }
 
 impl PlayerBar {
@@ -82,6 +188,7 @@ impl PlayerBar {
             last_volume: 0,
             last_muted: false,
             last_volume_change_at: None,
+            animation: PlayerBarAnimation::new(),
         }
     }
 
@@ -127,6 +234,7 @@ impl PlayerBar {
         let row0_y = inner.y;
         let row1_y = inner.y + 1;
         let row2_y = inner.y + inner.height - 1;
+        let mut controls_center_x = inner.x + inner.width.saturating_sub(1) / 2;
 
         if img_w > 0 {
             if let Some(proto) = &mut self.protocol {
@@ -398,6 +506,13 @@ impl PlayerBar {
                 sep(),
                 dislike_span,
             ]);
+            let play_prefix_w: u16 = controls
+                .spans
+                .iter()
+                .take(6)
+                .map(|s| s.width() as u16)
+                .sum();
+            let play_icon_w = controls.spans.get(6).map(|s| s.width() as u16).unwrap_or(1);
 
             let controls_w = controls.width() as u16;
             if controls_w > 0 {
@@ -414,6 +529,7 @@ impl PlayerBar {
                 } else {
                     min_x
                 };
+                controls_center_x = controls_x + play_prefix_w + (play_icon_w / 2);
 
                 frame.render_widget(
                     Paragraph::new(controls),
@@ -430,51 +546,77 @@ impl PlayerBar {
         {
             let current = self.signals.position_ms.get();
             let total = self.signals.duration_ms.get();
-            let ratio = if total > 0 {
+            let played_target = if total > 0 {
                 (current as f64 / total as f64).min(1.0)
             } else {
                 0.0
             };
-            let buffered = (self.signals.buffered_ratio.get() as f64).min(1.0);
+            let buffered_target = (self.signals.buffered_ratio.get() as f64).min(1.0);
+            let (played, buffered) = self.animation.ratios(played_target, buffered_target);
 
             let current_label = format_duration(current);
             let total_label = format_duration(total);
             let current_w = current_label.len() as u16;
             let total_w = total_label.len() as u16;
             let gap_w: u16 = 1;
+            let label_gap: u16 = 1;
 
-            let mut gauge_x = text_x;
-            let mut gauge_w = text_aw;
+            let target_gauge_w = (text_aw / 3).max(8);
+            let side_need = current_w.max(total_w).saturating_add(label_gap);
+            let max_centered_gauge_w = text_aw.saturating_sub(side_need.saturating_mul(2));
+            let mut gauge_w = target_gauge_w.min(max_centered_gauge_w).max(1);
+            if gauge_w % 2 == 0 && gauge_w < max_centered_gauge_w {
+                gauge_w += 1;
+            }
+            if gauge_w % 2 == 0 && gauge_w > 1 {
+                gauge_w -= 1;
+            }
+
+            let ideal_gauge_x = controls_center_x.saturating_sub(gauge_w / 2);
+
+            let min_gauge_x = text_x.saturating_add(current_w + label_gap);
+            let max_gauge_x = text_x
+                .saturating_add(text_aw)
+                .saturating_sub(gauge_w + total_w + label_gap);
+
+            let mut gauge_x = if max_gauge_x >= min_gauge_x {
+                ideal_gauge_x.clamp(min_gauge_x, max_gauge_x)
+            } else {
+                text_x + text_aw.saturating_sub(gauge_w) / 2
+            };
 
             if text_aw > current_w + total_w + (gap_w * 2) {
+                let current_x = gauge_x.saturating_sub(current_w + label_gap);
+                let total_x = gauge_x + gauge_w + label_gap;
+
+                if current_x < text_x || total_x + total_w > text_x + text_aw {
+                    gauge_x = text_x + text_aw.saturating_sub(gauge_w) / 2;
+                }
+
                 frame.render_widget(
                     Paragraph::new(Span::styled(current_label, styles.text_muted)),
                     Rect {
-                        x: text_x,
+                        x: gauge_x.saturating_sub(current_w + label_gap),
                         y: row2_y,
                         width: current_w,
                         height: 1,
                     },
                 );
 
-                let total_x = text_x + text_aw.saturating_sub(total_w + 1);
                 frame.render_widget(
                     Paragraph::new(Span::styled(total_label, styles.text_muted)),
                     Rect {
-                        x: total_x,
+                        x: gauge_x + gauge_w + label_gap,
                         y: row2_y,
                         width: total_w,
                         height: 1,
                     },
                 );
-
-                gauge_x = text_x + current_w + gap_w;
-                gauge_w = text_aw.saturating_sub(current_w + total_w + (gap_w * 2));
             }
 
             frame.render_widget(
                 CustomGauge::default()
-                    .ratios(ratio, buffered)
+                    .ratios(played, buffered)
                     .played_style(styles.progress_fg)
                     .buffered_style(styles.progress_bg)
                     .remaining_style(

@@ -46,7 +46,7 @@ impl TickRate {
         match self {
             TickRate::High => Duration::from_millis(16),
             TickRate::Animation => Duration::from_millis(16),
-            TickRate::Normal => Duration::from_millis(125),
+            TickRate::Normal => Duration::from_millis(50),
             TickRate::Idle => Duration::from_millis(1000),
         }
     }
