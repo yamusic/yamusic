@@ -8,6 +8,7 @@ pub struct PlaylistInfo {
     pub track_count: usize,
     pub duration_ms: Option<u64>,
     pub description: Option<String>,
+    pub cover_uri: Option<String>,
 }
 
 impl From<&Playlist> for PlaylistInfo {
@@ -19,6 +20,7 @@ impl From<&Playlist> for PlaylistInfo {
             track_count: playlist.track_count as usize,
             duration_ms: Some(playlist.duration.as_millis() as u64),
             description: playlist.description.clone(),
+            cover_uri: playlist.cover.uri.clone(),
         }
     }
 }

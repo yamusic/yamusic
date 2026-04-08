@@ -12,6 +12,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     audio::{queue::PlaybackContext, system::AudioSystem},
+    cache::image::ImageCache,
     event::events::Event,
     http::ApiService,
 };
@@ -55,6 +56,7 @@ pub struct App {
     sidebar: Sidebar,
     sidebar_visible: bool,
     should_quit: bool,
+    picker: Option<Picker>,
 
     search_state: SearchState,
     wave_state: WaveSessionState,
@@ -180,6 +182,7 @@ impl App {
             sidebar: Sidebar::new(theme_styles.clone()),
             sidebar_visible: true,
             should_quit: false,
+            picker: None,
             search_state,
             wave_state,
             home_view: HomeView::new(wave_state_waves, wave_state_loading, theme_styles.clone()),
@@ -849,6 +852,7 @@ impl App {
                         owner: String::new(),
                         owner_uid: 0,
                         track_count: 0,
+                        cover_url: None,
                     };
                     let view = TrackListView::new(context, source.clone(), &self.signals)
                         .with_playlist_info(playlist_info);
@@ -860,8 +864,8 @@ impl App {
                     let source = Arc::new(PlaylistDataSource::new(
                         self.signals.library.playlists.clone(),
                     ));
-                    self.playlist_list_view =
-                        Some(PlaylistListView::new(source.clone(), self.theme.clone()));
+                    let view = PlaylistListView::new(source.clone(), self.theme.clone());
+                    self.playlist_list_view = Some(view);
                 }
             }
             Route::Playlist { kind, title } => {
@@ -874,6 +878,7 @@ impl App {
                     owner: String::new(),
                     owner_uid: 0,
                     track_count: 0,
+                    cover_url: None,
                 };
 
                 let view = TrackListView::new(context, source.clone(), &self.signals)
@@ -898,6 +903,7 @@ impl App {
                     artists: String::new(),
                     year: None,
                     track_count: 0,
+                    cover_url: None,
                 };
 
                 let view = TrackListView::new(context, source.clone(), &self.signals);
@@ -912,6 +918,7 @@ impl App {
                     genres: String::new(),
                     likes: 0,
                     track_count: 0,
+                    cover_url: None,
                 };
 
                 let view = TrackListView::new(context, source.clone(), &self.signals);
@@ -1312,7 +1319,8 @@ impl App {
         terminal.init()?;
 
         let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-        self.player_bar.set_picker(picker);
+        ImageCache::set_global_picker(picker);
+        self.picker = None;
 
         terminal.start();
 

@@ -16,6 +16,7 @@ use crate::{
         views::TrackRenderer,
     },
     audio::queue::PlaybackContext,
+    cache::image::ImageCache,
     framework::{signals::Signal, theme::ThemeStyles},
 };
 
@@ -27,6 +28,7 @@ pub enum TrackListContext {
         owner: String,
         owner_uid: u64,
         track_count: usize,
+        cover_url: Option<String>,
     },
     Album {
         id: String,
@@ -34,6 +36,7 @@ pub enum TrackListContext {
         artists: String,
         year: Option<i32>,
         track_count: usize,
+        cover_url: Option<String>,
     },
     Artist {
         id: String,
@@ -41,6 +44,7 @@ pub enum TrackListContext {
         genres: String,
         likes: u64,
         track_count: usize,
+        cover_url: Option<String>,
     },
     Search {
         query: String,
@@ -57,40 +61,34 @@ impl TrackListContext {
                 title,
                 owner,
                 track_count,
+                cover_url,
                 ..
-            } => Some(HeaderBuilder::playlist(
-                title,
-                owner,
-                *track_count,
-                None,
-                theme,
-            )),
+            } => {
+                let header = HeaderBuilder::playlist(title, owner, *track_count, None, theme);
+                Some(header.with_cover_url(cover_url.clone()))
+            }
             TrackListContext::Album {
                 title,
                 artists,
                 year,
                 track_count,
+                cover_url,
                 ..
-            } => Some(HeaderBuilder::album(
-                title,
-                artists,
-                *year,
-                *track_count,
-                theme,
-            )),
+            } => {
+                let header = HeaderBuilder::album(title, artists, *year, *track_count, theme);
+                Some(header.with_cover_url(cover_url.clone()))
+            }
             TrackListContext::Artist {
                 name,
                 genres,
                 likes,
                 track_count,
+                cover_url,
                 ..
-            } => Some(HeaderBuilder::artist(
-                name,
-                genres,
-                *likes,
-                *track_count,
-                theme,
-            )),
+            } => {
+                let header = HeaderBuilder::artist(name, genres, *likes, *track_count, theme);
+                Some(header.with_cover_url(cover_url.clone()))
+            }
             TrackListContext::Search {
                 query,
                 result_count,
@@ -107,6 +105,24 @@ impl TrackListContext {
             TrackListContext::Album { .. } => PlaybackContext::Standalone,
             TrackListContext::Artist { .. } => PlaybackContext::Standalone,
             _ => PlaybackContext::Standalone,
+        }
+    }
+
+    pub fn cover_url(&self) -> Option<&str> {
+        match self {
+            TrackListContext::Playlist { cover_url, .. }
+            | TrackListContext::Album { cover_url, .. }
+            | TrackListContext::Artist { cover_url, .. } => cover_url.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn set_cover_url(&mut self, url: Option<String>) {
+        match self {
+            TrackListContext::Playlist { cover_url, .. }
+            | TrackListContext::Album { cover_url, .. }
+            | TrackListContext::Artist { cover_url, .. } => *cover_url = url,
+            _ => {}
         }
     }
 }
@@ -163,6 +179,12 @@ impl TrackListView {
                 album: Some(album),
             }
         });
+
+        if let Some(url) = context.cover_url() {
+            let cache = ImageCache::global();
+            cache.get_or_fetch(url);
+        }
+
         let header = context.build_header(theme.clone());
 
         Self {
@@ -203,12 +225,19 @@ impl TrackListView {
                 track_count,
                 owner,
                 owner_uid,
+                cover_url,
                 ..
             } = &mut self.context
             {
                 *track_count = info.track_count;
                 *owner = info.owner.clone();
                 *owner_uid = info.owner_uid;
+
+                if cover_url.is_none() {
+                    if let Some(uri) = &info.cover_uri {
+                        *cover_url = Some(ImageCache::resolve_cover_uri(uri, "200x200"));
+                    }
+                }
             }
             self.header = self.context.build_header(self.theme.clone());
         }
@@ -259,13 +288,17 @@ impl TrackListView {
         let is_loading = matches!(self.source.fetch_state(), FetchState::Loading);
         let no_tracks = self.source.total().is_none_or(|t| t == 0);
 
-        if let Some(header) = &self.header {
+        if let Some(header) = &mut self.header {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(header.height()), Constraint::Min(0)])
                 .split(area);
 
-            header.view(frame, chunks[0]);
+            if let Some(mut picker) = ImageCache::global_picker() {
+                header.view_with_picker(frame, chunks[0], &mut picker);
+            } else {
+                header.view(frame, chunks[0]);
+            }
 
             if is_loading && no_tracks {
                 let spinner = Spinner::new()
@@ -292,6 +325,7 @@ impl TrackListView {
             owner,
             owner_uid,
             track_count,
+            cover_url,
             ..
         } = &mut self.context
         {
@@ -299,6 +333,12 @@ impl TrackListView {
             *owner = playlist.owner.name.clone().unwrap_or_default();
             *owner_uid = playlist.owner.uid;
             *track_count = playlist.track_count as usize;
+
+            if cover_url.is_none() {
+                if let Some(uri) = &playlist.cover.uri {
+                    *cover_url = Some(ImageCache::resolve_cover_uri(uri, "200x200"));
+                }
+            }
         }
 
         self.header = self.context.build_header(self.theme.clone());

@@ -6,13 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthChar;
 use yandex_music::model::track::Track;
 
-use super::icons::{HEART_EMPTY, HEART_FILLED};
+use super::icons::{ARTIST_ICON, HEART_EMPTY, HEART_FILLED};
 use crate::{
     app::{
         data::{ItemRenderer, ListItem, MatchHighlights, SearchScope},
         signals::LibrarySignals,
         views::icons::HEART_CROSSED,
     },
+    cache::image::ImageCache,
     framework::{signals::Signal, theme::ThemeStyles},
 };
 
@@ -205,15 +206,18 @@ impl ItemRenderer<Track> for TrackRenderer {
             (title_w, artist_w, 0)
         };
 
-        let mut spans = Vec::new();
+        let mut prefix_line1 = Vec::new();
+        let mut prefix_line2 = Vec::new();
+        let mut line1 = Vec::new();
+        let mut line2 = Vec::new();
 
         if is_current {
             let icon = active_track_icon(playing);
-            spans.push(Span::styled(format!("{} ", icon), styles.accent));
+            prefix_line1.push(Span::styled(format!("{} ", icon), styles.accent));
         } else if self.show_number {
-            spans.push(Span::styled(format!("{:2}", index + 1), styles.text_muted));
+            prefix_line1.push(Span::styled(format!("{:2} ", index + 1), styles.text_muted));
         } else {
-            spans.push(Span::raw("  "));
+            prefix_line1.push(Span::raw("   "));
         }
 
         let heart = if is_disliked {
@@ -234,7 +238,9 @@ impl ItemRenderer<Track> for TrackRenderer {
         } else {
             styles.text_muted
         };
-        spans.push(Span::styled(format!("{}  ", heart), heart_style));
+
+        prefix_line2.push(Span::raw("   "));
+        line1.push(Span::styled(format!("{}  ", heart), heart_style));
 
         let hl_style = if is_selected {
             Style::default()
@@ -313,27 +319,29 @@ impl ItemRenderer<Track> for TrackRenderer {
         } else {
             title_base_style
         };
-        spans.extend(create_highlighted_spans(
+        line1.extend(create_highlighted_spans(
             &title,
-            title_width,
+            title_width + album_width,
             title_style,
             &highlights.title,
             hl_style,
         ));
 
-        spans.push(Span::raw(" "));
-
-        spans.extend(create_highlighted_spans(
+        line2.push(Span::styled(
+            format!("{}  ", ARTIST_ICON),
+            styles.text_muted.remove_modifier(Modifier::BOLD),
+        ));
+        line2.extend(create_highlighted_spans(
             &artists,
-            artist_width,
+            artist_width + title_width,
             artist_base_style,
             &highlights.artist,
             hl_style,
         ));
 
         if self.show_album && album_width > 0 {
-            spans.push(Span::raw(" "));
-            spans.extend(create_highlighted_spans(
+            line2.push(Span::styled("  󰀥 ", styles.text_muted));
+            line2.extend(create_highlighted_spans(
                 &album_title,
                 album_width,
                 album_base_style,
@@ -343,10 +351,10 @@ impl ItemRenderer<Track> for TrackRenderer {
         }
 
         if self.show_duration && !duration_str.is_empty() {
-            spans.push(Span::raw(" "));
+            line1.push(Span::styled("󱑎", styles.text_muted));
             let duration_formatted = format!("{:>5}", duration_str);
-            spans.push(Span::styled(duration_formatted, styles.text_muted));
-            spans.push(Span::raw("   "));
+            line1.push(Span::styled(duration_formatted, styles.text_muted));
+            line1.push(Span::raw("   "));
         }
 
         let style = if is_selected {
@@ -357,6 +365,15 @@ impl ItemRenderer<Track> for TrackRenderer {
             styles.text
         };
 
-        ListItem::from_lines(vec![Line::from(spans)]).style(style)
+        let cover_url = track
+            .cover_uri
+            .as_ref()
+            .or_else(|| track.albums.first().and_then(|a| a.cover_uri.as_ref()))
+            .map(|uri| ImageCache::resolve_cover_uri(uri, "100x100"));
+
+        ListItem::from_lines(vec![Line::from(line1), Line::from(line2)])
+            .style(style)
+            .with_prefix(vec![Line::from(prefix_line1), Line::from(prefix_line2)])
+            .with_cover(cover_url)
     }
 }

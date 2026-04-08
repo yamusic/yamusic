@@ -8,16 +8,20 @@ use crate::framework::theme::global_theme;
 #[derive(Debug, Clone)]
 pub struct ListItem<'a> {
     pub content: Vec<Line<'a>>,
+    pub prefix_lines: Option<Vec<Line<'a>>>,
     pub height: u16,
     pub style: Style,
+    pub cover_url: Option<String>,
 }
 
 impl<'a> ListItem<'a> {
     pub fn simple(text: impl Into<String>) -> Self {
         Self {
             content: vec![Line::from(text.into())],
+            prefix_lines: None,
             height: 1,
             style: Style::default(),
+            cover_url: None,
         }
     }
 
@@ -28,8 +32,10 @@ impl<'a> ListItem<'a> {
                 Line::from(title.into()),
                 Line::from(Span::styled(subtitle.into(), muted_style)),
             ],
+            prefix_lines: None,
             height: 2,
             style: Style::default(),
+            cover_url: None,
         }
     }
 
@@ -37,13 +43,25 @@ impl<'a> ListItem<'a> {
         let height = lines.len() as u16;
         Self {
             content: lines,
+            prefix_lines: None,
             height,
             style: Style::default(),
+            cover_url: None,
         }
     }
 
     pub fn style(mut self, style: Style) -> Self {
         self.style = style;
+        self
+    }
+
+    pub fn with_cover(mut self, url: Option<String>) -> Self {
+        self.cover_url = url;
+        self
+    }
+
+    pub fn with_prefix(mut self, prefix_lines: Vec<Line<'a>>) -> Self {
+        self.prefix_lines = Some(prefix_lines);
         self
     }
 

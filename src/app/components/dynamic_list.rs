@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     widgets::{
-        Block, Borders, List, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, Borders, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
     },
 };
 
@@ -13,11 +13,14 @@ use crate::{
     app::{
         actions::Action,
         components::fuzzy::fuzzy_match_positioned,
-        data::{DataSource, ItemRenderer, MatchHighlights, SearchScope},
+        data::{DataSource, ItemRenderer, ListItem, MatchHighlights, SearchScope},
         keymap::Key,
     },
+    cache::image::ImageCache,
     framework::{signals::Signal, theme::ThemeStyles},
 };
+use ratatui_image::{StatefulImage, protocol::StatefulProtocol};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct FuzzyFields {
@@ -62,6 +65,7 @@ pub struct DynamicList<T> {
     search_mode: Signal<bool>,
     search_scope: Signal<SearchScope>,
     fuzzy_labeler: Option<Arc<dyn Fn(&T) -> FuzzyFields + Send + Sync>>,
+    image_protocols: HashMap<String, StatefulProtocol>,
 }
 
 impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
@@ -91,6 +95,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             search_mode: Signal::new(false),
             search_scope: Signal::new(SearchScope::Full),
             fuzzy_labeler: None,
+            image_protocols: HashMap::new(),
         }
     }
 
@@ -349,7 +354,8 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
         total: usize,
         selected_pos: usize,
     ) -> (usize, usize) {
-        let visible_count = area_height as usize;
+        let item_height = 3;
+        let visible_count = (area_height as usize).div_ceil(item_height);
 
         if total == 0 {
             return (0, 0);
@@ -364,6 +370,9 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
         } else {
             start
         };
+
+        let start = start.saturating_sub(2);
+        let end = (end + 2).min(total);
 
         (start, end)
     }
@@ -577,6 +586,8 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
+        let _ = ImageCache::global().version().track();
+
         let styles = self.theme.get();
         let playing = self.playing_index.get();
         let (list_area, search_active) = if self.search_mode.get() {
@@ -592,7 +603,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
         let selected = self.selection.get();
         let active = self.active_indices();
 
-        let (total, selected_pos, list_items): (usize, usize, Vec<ratatui::widgets::ListItem<'_>>) =
+        let (total, selected_pos, list_items): (usize, usize, Vec<ListItem<'static>>) =
             if let Some(active_indices) = active {
                 let all_items = self.source.range(0..usize::MAX);
                 if active_indices.is_empty() {
@@ -626,16 +637,14 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                         .map(|(actual_index, item, highlights)| {
                             let is_selected = *actual_index == selected_abs;
                             let is_playing = playing == Some(*actual_index);
-                            self.renderer
-                                .render_with_context(
-                                    item,
-                                    *actual_index,
-                                    is_selected,
-                                    is_playing,
-                                    list_area.width,
-                                    highlights,
-                                )
-                                .into()
+                            self.renderer.render_with_context(
+                                item,
+                                *actual_index,
+                                is_selected,
+                                is_playing,
+                                list_area.width,
+                                highlights,
+                            )
                         })
                         .collect();
 
@@ -663,16 +672,14 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                         let actual_index = start + i;
                         let is_selected = actual_index == selected;
                         let is_playing = playing == Some(actual_index);
-                        self.renderer
-                            .render_with_context(
-                                item,
-                                actual_index,
-                                is_selected,
-                                is_playing,
-                                list_area.width,
-                                &MatchHighlights::default(),
-                            )
-                            .into()
+                        self.renderer.render_with_context(
+                            item,
+                            actual_index,
+                            is_selected,
+                            is_playing,
+                            list_area.width,
+                            &MatchHighlights::default(),
+                        )
                     })
                     .collect();
 
@@ -694,15 +701,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                 .border_style(styles.block);
         }
 
-        let list = List::new(list_items)
-            .block(block)
-            .style(styles.text)
-            .highlight_style(self.config.highlight_style)
-            .highlight_symbol(self.config.highlight_symbol.as_str());
-
-        let visible_start = self.visible_range.0;
-        self.list_state
-            .select(Some(selected_pos.saturating_sub(visible_start)));
+        let inner_area = block.inner(list_area);
 
         if search_active {
             let chunks = Layout::default()
@@ -721,9 +720,132 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                 .style(styles.text);
             frame.render_widget(paragraph, search_area);
 
-            frame.render_stateful_widget(list, list_area, &mut self.list_state);
+            frame.render_widget(block, list_area);
         } else {
-            frame.render_stateful_widget(list, area, &mut self.list_state);
+            frame.render_widget(block, area);
+        }
+
+        let visible_urls: std::collections::HashSet<String> = list_items
+            .iter()
+            .filter_map(|i| i.cover_url.clone())
+            .collect();
+        self.image_protocols
+            .retain(|url, _| visible_urls.contains(url));
+
+        let mut current_y = inner_area.y;
+
+        for (i, item) in list_items.into_iter().enumerate() {
+            if current_y >= inner_area.y + inner_area.height {
+                break;
+            }
+
+            let item_height = item.height;
+            let is_selected = i == selected_pos.saturating_sub(self.visible_range.0);
+
+            let render_height = item_height.min(inner_area.y + inner_area.height - current_y);
+            let item_area = Rect {
+                x: inner_area.x,
+                y: current_y,
+                width: inner_area.width,
+                height: render_height,
+            };
+
+            if is_selected {
+                frame.render_widget(
+                    ratatui::widgets::Block::default().style(
+                        Style::default().bg(styles
+                            .selected
+                            .bg
+                            .unwrap_or(ratatui::style::Color::DarkGray)),
+                    ),
+                    item_area,
+                );
+            }
+
+            let mut text_area = item_area;
+            let mut prefix_area = None;
+
+            if is_selected {
+                let prefix_width = self.config.highlight_symbol.chars().count() as u16;
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(prefix_width), Constraint::Min(0)])
+                    .split(text_area);
+                prefix_area = Some(chunks[0]);
+                text_area = chunks[1];
+            } else {
+                let prefix_width = self.config.highlight_symbol.chars().count() as u16;
+                let chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(prefix_width), Constraint::Min(0)])
+                    .split(text_area);
+                text_area = chunks[1];
+            }
+
+            if let Some(prefix) = prefix_area {
+                let p = ratatui::widgets::Paragraph::new(self.config.highlight_symbol.clone())
+                    .style(self.config.highlight_style);
+                frame.render_widget(p, prefix);
+            }
+
+            let final_style = if is_selected {
+                item.style.patch(self.config.highlight_style)
+            } else {
+                item.style
+            };
+
+            if let Some(prefix_lines) = &item.prefix_lines {
+                let max_width = prefix_lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+                if max_width > 0 {
+                    let chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Length(max_width), Constraint::Min(0)])
+                        .split(text_area);
+
+                    let p_area = chunks[0];
+                    text_area = chunks[1];
+
+                    let paragraph = Paragraph::new(prefix_lines.clone()).style(final_style);
+                    frame.render_widget(paragraph, p_area);
+                }
+            }
+
+            if let Some(cover_url) = &item.cover_url {
+                if let Some(picker) = ImageCache::global_picker() {
+                    if let Some(img) = ImageCache::global().get_or_fetch(cover_url) {
+                        let mut img_w = render_height * 2;
+                        img_w = img_w.min(text_area.width / 4).max(2);
+
+                        let img_rect = Rect {
+                            x: text_area.x,
+                            y: text_area.y,
+                            width: img_w,
+                            height: render_height,
+                        };
+
+                        let proto = self
+                            .image_protocols
+                            .entry(cover_url.clone())
+                            .or_insert_with(|| picker.new_resize_protocol((*img).clone()));
+
+                        frame.render_stateful_widget(StatefulImage::new(), img_rect, proto);
+
+                        let text_x = text_area.x + img_w + 1;
+                        let text_w = text_area.width.saturating_sub(img_w + 1);
+                        text_area = Rect {
+                            x: text_x,
+                            y: text_area.y,
+                            width: text_w,
+                            height: render_height,
+                        };
+                    }
+                }
+            }
+
+            let paragraph = Paragraph::new(item.content).style(final_style);
+            frame.render_widget(paragraph, text_area);
+
+            current_y += item_height + 1;
         }
 
         if self.config.show_scrollbar && total > inner_height as usize {
@@ -732,9 +854,9 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
 
             let scrollbar_area = Rect {
                 x: list_area.x + list_area.width - 1,
-                y: list_area.y + 1,
+                y: list_area.y,
                 width: 1,
-                height: list_area.height.saturating_sub(2),
+                height: list_area.height,
             };
 
             frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);

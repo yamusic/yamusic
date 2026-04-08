@@ -2,6 +2,7 @@
 pub mod app;
 pub mod audio;
 pub mod auth;
+pub mod cache;
 pub mod event;
 pub mod framework;
 pub mod http;
