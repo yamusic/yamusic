@@ -492,6 +492,61 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
         self.search_query.set(String::new());
     }
 
+    fn render_item(
+        &self,
+        item: &T,
+        actual_index: usize,
+        is_selected: bool,
+        is_playing: bool,
+        list_width: u16,
+        highlights: &MatchHighlights,
+    ) -> ListItem<'static> {
+        let mut rendered = self.renderer.render_with_context(
+            item,
+            actual_index,
+            is_selected,
+            is_playing,
+            list_width,
+            highlights,
+        );
+
+        let highlight_w = self.config.highlight_symbol.chars().count() as u16;
+        let reserve_highlight = rendered.prefix_lines.is_none();
+        let prefix_w = rendered
+            .prefix_lines
+            .as_ref()
+            .map(|lines| lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16)
+            .unwrap_or(0);
+
+        let text_after_prefix =
+            list_width.saturating_sub(if reserve_highlight { highlight_w } else { 0 } + prefix_w);
+        let cover_reserved = if rendered.cover_url.is_some() {
+            let img_w = (rendered.height * 2).min(text_after_prefix / 4).max(2);
+            img_w.saturating_add(1)
+        } else {
+            0
+        };
+
+        let effective_text_width = list_width
+            .saturating_sub(if reserve_highlight { highlight_w } else { 0 })
+            .saturating_sub(prefix_w)
+            .saturating_sub(cover_reserved)
+            .max(1);
+
+        if effective_text_width < list_width {
+            rendered = self.renderer.render_with_context(
+                item,
+                actual_index,
+                is_selected,
+                is_playing,
+                effective_text_width,
+                highlights,
+            );
+        }
+
+        rendered
+    }
+
     pub fn handle_key(&mut self, key: &Key, prefix: Option<char>) -> Action {
         if self.search_mode.get() {
             match key {
@@ -637,7 +692,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                         .map(|(actual_index, item, highlights)| {
                             let is_selected = *actual_index == selected_abs;
                             let is_playing = playing == Some(*actual_index);
-                            self.renderer.render_with_context(
+                            self.render_item(
                                 item,
                                 *actual_index,
                                 is_selected,
@@ -672,7 +727,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                         let actual_index = start + i;
                         let is_selected = actual_index == selected;
                         let is_playing = playing == Some(actual_index);
-                        self.renderer.render_with_context(
+                        self.render_item(
                             item,
                             actual_index,
                             is_selected,
@@ -768,8 +823,9 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
 
             let mut text_area = item_area;
             let mut prefix_area = None;
+            let reserve_highlight = item.prefix_lines.is_none();
 
-            if is_selected {
+            if reserve_highlight && is_selected {
                 let prefix_width = self.config.highlight_symbol.chars().count() as u16;
                 let chunks = Layout::default()
                     .direction(Direction::Horizontal)
@@ -777,7 +833,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                     .split(text_area);
                 prefix_area = Some(chunks[0]);
                 text_area = chunks[1];
-            } else {
+            } else if reserve_highlight {
                 let prefix_width = self.config.highlight_symbol.chars().count() as u16;
                 let chunks = Layout::default()
                     .direction(Direction::Horizontal)

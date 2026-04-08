@@ -252,11 +252,7 @@ impl PlayerBar {
         }
 
         {
-            let title = self
-                .signals
-                .track_title
-                .get()
-                .unwrap_or_else(|| "No track".into());
+            let title = self.signals.track_title.get().unwrap_or(String::new());
 
             frame.render_widget(
                 Paragraph::new(Span::styled(

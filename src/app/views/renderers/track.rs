@@ -3,7 +3,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use yandex_music::model::track::Track;
 
 use super::icons::{ARTIST_ICON, HEART_EMPTY, HEART_FILLED};
@@ -171,6 +171,11 @@ impl ItemRenderer<Track> for TrackRenderer {
         } else {
             String::new()
         };
+        let cover_url = track
+            .cover_uri
+            .as_ref()
+            .or_else(|| track.albums.first().and_then(|a| a.cover_uri.as_ref()))
+            .map(|uri| ImageCache::resolve_cover_uri(uri, "100x100"));
         let duration_str = if self.show_duration && track.duration.is_some() {
             Self::format_duration(track.duration.unwrap())
         } else {
@@ -187,23 +192,31 @@ impl ItemRenderer<Track> for TrackRenderer {
         };
         let playing = self.is_playing.get();
 
-        let icon_width = 2usize;
-        let heart_width = 2usize;
-        let duration_total: usize = if self.show_duration { 11 } else { 0 };
-        let gap_width = 1usize;
-        let num_gaps = if self.show_album { 3 } else { 2 };
-        let fixed_width = icon_width + heart_width + duration_total + (gap_width * num_gaps);
-        let remaining = (available_width as usize).saturating_sub(fixed_width);
-
-        let (title_width, artist_width, album_width) = if self.show_album {
-            let title_w = (remaining * 40) / 100;
-            let artist_w = (remaining * 30) / 100;
-            let album_w = remaining.saturating_sub(title_w + artist_w);
-            (title_w, artist_w, album_w)
+        let duration_segment_width = if self.show_duration && !duration_str.is_empty() {
+            "󰚭".width() + 5 + 3
         } else {
-            let title_w = (remaining * 55) / 100;
-            let artist_w = remaining.saturating_sub(title_w);
-            (title_w, artist_w, 0)
+            0
+        };
+        let line1_prefix_width = "󰋕  ".width();
+        let line2_prefix_width = format!("{}  ", ARTIST_ICON).width();
+        let album_icon_width = if self.show_album { " 󰀥 ".width() } else { 0 };
+
+        let line1_text_budget =
+            (available_width as usize).saturating_sub(line1_prefix_width + duration_segment_width);
+        let line2_text_budget =
+            (available_width as usize).saturating_sub(line2_prefix_width + album_icon_width);
+
+        let (artist_width, album_width) = if self.show_album {
+            let artist_w = (line2_text_budget * 65) / 100;
+            let album_w = line2_text_budget.saturating_sub(artist_w);
+            (artist_w, album_w)
+        } else {
+            (line2_text_budget, 0)
+        };
+        let title_width = if self.show_album {
+            line1_text_budget.min(artist_width)
+        } else {
+            line1_text_budget
         };
 
         let mut prefix_line1 = Vec::new();
@@ -211,14 +224,21 @@ impl ItemRenderer<Track> for TrackRenderer {
         let mut line1 = Vec::new();
         let mut line2 = Vec::new();
 
-        if is_current {
+        if is_selected {
+            prefix_line1.push(Span::styled(
+                "> ",
+                styles.accent.add_modifier(Modifier::BOLD),
+            ));
+        } else if is_current {
             let icon = active_track_icon(playing);
             prefix_line1.push(Span::styled(format!("{} ", icon), styles.accent));
         } else if self.show_number {
-            prefix_line1.push(Span::styled(format!("{:2} ", index + 1), styles.text_muted));
+            prefix_line1.push(Span::styled(format!("{:2}", index + 1), styles.text_muted));
         } else {
-            prefix_line1.push(Span::raw("   "));
+            prefix_line1.push(Span::raw("  "));
         }
+
+        prefix_line2.push(Span::raw("  "));
 
         let heart = if is_disliked {
             HEART_CROSSED
@@ -239,7 +259,6 @@ impl ItemRenderer<Track> for TrackRenderer {
             styles.text_muted
         };
 
-        prefix_line2.push(Span::raw("   "));
         line1.push(Span::styled(format!("{}  ", heart), heart_style));
 
         let hl_style = if is_selected {
@@ -313,7 +332,7 @@ impl ItemRenderer<Track> for TrackRenderer {
         };
 
         let title_style = if is_current {
-            styles.accent.add_modifier(Modifier::BOLD)
+            title_base_style.add_modifier(Modifier::BOLD)
         } else if is_disliked {
             styles.text_muted.add_modifier(Modifier::DIM)
         } else {
@@ -321,7 +340,7 @@ impl ItemRenderer<Track> for TrackRenderer {
         };
         line1.extend(highlight_spans(
             &title,
-            title_width + album_width,
+            title_width,
             title_style,
             &highlights.title,
             hl_style,
@@ -333,7 +352,7 @@ impl ItemRenderer<Track> for TrackRenderer {
         ));
         line2.extend(highlight_spans(
             &artists,
-            artist_width + title_width,
+            artist_width,
             artist_base_style,
             &highlights.artist,
             hl_style,
@@ -351,6 +370,7 @@ impl ItemRenderer<Track> for TrackRenderer {
         }
 
         if self.show_duration && !duration_str.is_empty() {
+            line1.push(Span::raw(" "));
             line1.push(Span::styled("󰚭", styles.text_muted));
             let duration_formatted = format!("{:>5}", duration_str);
             line1.push(Span::styled(duration_formatted, styles.text_muted));
@@ -364,12 +384,6 @@ impl ItemRenderer<Track> for TrackRenderer {
         } else {
             styles.text
         };
-
-        let cover_url = track
-            .cover_uri
-            .as_ref()
-            .or_else(|| track.albums.first().and_then(|a| a.cover_uri.as_ref()))
-            .map(|uri| ImageCache::resolve_cover_uri(uri, "100x100"));
 
         ListItem::from_lines(vec![Line::from(line1), Line::from(line2)])
             .style(style)
