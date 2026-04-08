@@ -492,7 +492,7 @@ impl PlayerBar {
             };
 
             let controls = Line::from(vec![
-                like_span,
+                dislike_span,
                 sep(),
                 shuffle_span,
                 sep(),
@@ -504,7 +504,7 @@ impl PlayerBar {
                 sep(),
                 repeat_span,
                 sep(),
-                dislike_span,
+                like_span,
             ]);
             let play_prefix_w: u16 = controls
                 .spans
