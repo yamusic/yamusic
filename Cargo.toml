@@ -65,8 +65,16 @@ pollster = "0.4"
 im = "15.1.0"
 arc-swap = "1"
 nucleo-matcher = "0.3.1"
-ratatui-image = "10.0.6"
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+ratatui-image = { version = "10.0.6", default-features = false, features = [
+  "chafa-dyn",
+  "tokio",
+  "crossterm",
+] }
+image = { version = "0.25.10", default-features = false, features = [
+  "jpeg",
+  "png",
+] }
+dashmap = "6.1.0"
 
 [features]
 nightly = []

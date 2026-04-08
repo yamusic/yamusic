@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
-use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
+use ratatui_image::{StatefulImage, protocol::StatefulProtocol};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -16,11 +16,8 @@ use std::{
 
 use crate::{
     audio::enums::RepeatMode,
-    framework::{
-        reactive::{Resource, ResourceState, effect},
-        signals::Signal,
-        theme::ThemeStyles,
-    },
+    cache::image::ImageCache,
+    framework::{signals::Signal, theme::ThemeStyles},
 };
 
 pub struct PlayerSignals {
@@ -68,9 +65,7 @@ impl Default for PlayerSignals {
 pub struct PlayerBar {
     signals: PlayerSignals,
     theme: Signal<ThemeStyles>,
-    picker: Option<Picker>,
     protocol: Option<StatefulProtocol>,
-    cover_art: Resource<Option<Arc<DynamicImage>>>,
     last_art: Option<Arc<DynamicImage>>,
     last_volume: u8,
     last_muted: bool,
@@ -79,43 +74,10 @@ pub struct PlayerBar {
 
 impl PlayerBar {
     pub fn new(signals: PlayerSignals, theme: Signal<ThemeStyles>) -> Self {
-        let cover_url = signals.cover_url.clone();
-        let cover_art = Resource::new({
-            let cover_url = cover_url.clone();
-            move || {
-                let cover_url = cover_url.clone();
-                async move {
-                    let Some(url) = cover_url.get() else {
-                        return Ok(None);
-                    };
-
-                    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
-                    if !response.status().is_success() {
-                        return Ok(None);
-                    }
-
-                    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-                    let image = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-                    Ok(Some(Arc::new(image)))
-                }
-            }
-        });
-
-        effect({
-            let cover_url = signals.cover_url.clone();
-            let cover_art = cover_art.clone();
-            move || {
-                let _ = cover_url.get();
-                cover_art.refetch();
-            }
-        });
-
         Self {
             signals,
             theme,
-            picker: None,
             protocol: None,
-            cover_art,
             last_art: None,
             last_volume: 0,
             last_muted: false,
@@ -123,17 +85,16 @@ impl PlayerBar {
         }
     }
 
-    pub fn set_picker(&mut self, picker: Picker) {
-        self.picker = Some(picker);
-    }
-
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let styles = self.theme.get();
 
-        let current_art = match self.cover_art.get() {
-            ResourceState::Ready(image) | ResourceState::Stale(image) => image,
-            ResourceState::Loading | ResourceState::Error(_) | ResourceState::Idle => None,
-        };
+        let cache = ImageCache::global();
+        let current_art = self
+            .signals
+            .cover_url
+            .get()
+            .and_then(|url| cache.get_or_fetch(&url));
+
         let art_changed = match (&self.last_art, &current_art) {
             (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
             (None, None) => false,
@@ -141,7 +102,7 @@ impl PlayerBar {
         };
         if art_changed {
             self.protocol = None;
-            if let (Some(picker), Some(art)) = (&mut self.picker, &current_art) {
+            if let (Some(picker), Some(art)) = (ImageCache::global_picker(), &current_art) {
                 self.protocol = Some(picker.new_resize_protocol((**art).clone()));
             }
             self.last_art = current_art;
@@ -232,7 +193,7 @@ impl PlayerBar {
             let show_volume = text_aw > left_w + vol_compact_w + 8;
             let vol_w = if show_volume { vol_compact_w } else { 0 };
             let gap_w: u16 = if show_volume { 2 } else { 0 };
-            let vol_x = text_x + text_aw.saturating_sub(vol_w + 1);
+            let vol_x = text_x + text_aw.saturating_sub(vol_w + 2);
 
             if show_volume {
                 let vol_icon = if is_muted || vol == 0 {
@@ -475,20 +436,45 @@ impl PlayerBar {
                 0.0
             };
             let buffered = (self.signals.buffered_ratio.get() as f64).min(1.0);
-            let prog_label = Span::styled(
-                format!(
-                    "{}  ╱  {}",
-                    format_duration(current),
-                    format_duration(total)
-                ),
-                Style::default().fg(styles.text_muted.fg.unwrap_or_default()),
-            );
+
+            let current_label = format_duration(current);
+            let total_label = format_duration(total);
+            let current_w = current_label.len() as u16;
+            let total_w = total_label.len() as u16;
+            let gap_w: u16 = 1;
+
+            let mut gauge_x = text_x;
+            let mut gauge_w = text_aw;
+
+            if text_aw > current_w + total_w + (gap_w * 2) {
+                frame.render_widget(
+                    Paragraph::new(Span::styled(current_label, styles.text_muted)),
+                    Rect {
+                        x: text_x,
+                        y: row2_y,
+                        width: current_w,
+                        height: 1,
+                    },
+                );
+
+                let total_x = text_x + text_aw.saturating_sub(total_w + 1);
+                frame.render_widget(
+                    Paragraph::new(Span::styled(total_label, styles.text_muted)),
+                    Rect {
+                        x: total_x,
+                        y: row2_y,
+                        width: total_w,
+                        height: 1,
+                    },
+                );
+
+                gauge_x = text_x + current_w + gap_w;
+                gauge_w = text_aw.saturating_sub(current_w + total_w + (gap_w * 2));
+            }
 
             frame.render_widget(
                 CustomGauge::default()
                     .ratios(ratio, buffered)
-                    .label(prog_label)
-                    .label_center_area(inner)
                     .played_style(styles.progress_fg)
                     .buffered_style(styles.progress_bg)
                     .remaining_style(
@@ -498,9 +484,9 @@ impl PlayerBar {
                     )
                     .use_unicode(true),
                 Rect {
-                    x: text_x,
+                    x: gauge_x,
                     y: row2_y,
-                    width: text_aw,
+                    width: gauge_w,
                     height: 1,
                 },
             );
@@ -513,8 +499,6 @@ struct CustomGauge<'a> {
     block: Option<Block<'a>>,
     played_ratio: f64,
     buffered_ratio: f64,
-    label: Option<Span<'a>>,
-    label_center_area: Option<Rect>,
     use_unicode: bool,
     style: Style,
     played_style: Style,
@@ -534,16 +518,6 @@ impl<'a> CustomGauge<'a> {
         );
         self.played_ratio = played;
         self.buffered_ratio = buffered;
-        self
-    }
-
-    fn label<T: Into<Span<'a>>>(mut self, label: T) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-
-    const fn label_center_area(mut self, area: Rect) -> Self {
-        self.label_center_area = Some(area);
         self
     }
 
@@ -568,11 +542,6 @@ impl<'a> CustomGauge<'a> {
     }
 
     fn render_gauge(&self, gauge_area: Rect, buf: &mut Buffer) {
-        let center_area = self.label_center_area.unwrap_or(gauge_area);
-        self.render_gauge_full(gauge_area, center_area, buf);
-    }
-
-    fn render_gauge_full(&self, gauge_area: Rect, full_area: Rect, buf: &mut Buffer) {
         if gauge_area.is_empty() {
             return;
         }
@@ -580,16 +549,6 @@ impl<'a> CustomGauge<'a> {
         let width = gauge_area.width as f64;
         let played_pos = width * self.played_ratio;
         let buffered_pos = width * self.buffered_ratio;
-
-        let fallback = Span::raw(format!(
-            "{}% / {}%",
-            (self.played_ratio * 100.0).round() as u16,
-            (self.buffered_ratio * 100.0).round() as u16,
-        ));
-        let label = self.label.as_ref().unwrap_or(&fallback);
-        let lbl_w = label.width() as u16;
-        let label_col = full_area.left() + (full_area.width.saturating_sub(lbl_w)) / 2;
-        let label_row = gauge_area.top() + gauge_area.height / 2;
 
         for y in gauge_area.top()..gauge_area.bottom() {
             for x in gauge_area.left()..gauge_area.right() {
@@ -612,19 +571,12 @@ impl<'a> CustomGauge<'a> {
                     symbol = " ";
                 }
 
-                if y == label_row && x >= label_col && x < label_col + lbl_w {
-                    symbol = " ";
-                    style = style.bg(style.fg.unwrap_or_default());
-                }
-
                 buf[(x, y)]
                     .set_symbol(symbol)
                     .set_fg(style.fg.unwrap_or_default())
                     .set_bg(style.bg.unwrap_or_default());
             }
         }
-
-        buf.set_span(label_col, label_row, label, lbl_w);
     }
 }
 

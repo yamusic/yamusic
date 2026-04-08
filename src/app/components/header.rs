@@ -5,9 +5,15 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
+use std::sync::Arc;
 
-use crate::framework::{signals::Signal, theme::ThemeStyles};
+use crate::{
+    cache::image::ImageCache,
+    framework::{signals::Signal, theme::ThemeStyles},
+};
 use im::Vector;
+use image::DynamicImage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HeaderLine {
@@ -40,6 +46,9 @@ pub struct Header {
     height: u16,
     show_border: bool,
     theme: Signal<ThemeStyles>,
+    cover_url: Option<String>,
+    cover_protocol: Option<StatefulProtocol>,
+    last_cover: Option<Arc<DynamicImage>>,
 }
 
 impl Header {
@@ -50,6 +59,9 @@ impl Header {
             height,
             show_border: true,
             theme,
+            cover_url: None,
+            cover_protocol: None,
+            last_cover: None,
         }
     }
 
@@ -59,6 +71,9 @@ impl Header {
             height: 6,
             show_border: true,
             theme,
+            cover_url: None,
+            cover_protocol: None,
+            last_cover: None,
         }
     }
 
@@ -72,6 +87,19 @@ impl Header {
         self
     }
 
+    pub fn with_cover_url(mut self, url: Option<String>) -> Self {
+        self.cover_url = url;
+        self
+    }
+
+    pub fn set_cover_url(&mut self, url: Option<String>) {
+        if self.cover_url != url {
+            self.cover_url = url;
+            self.cover_protocol = None;
+            self.last_cover = None;
+        }
+    }
+
     pub fn height(&self) -> u16 {
         self.height
     }
@@ -80,10 +108,137 @@ impl Header {
         self.lines.set(Vector::from(lines));
     }
 
+    fn resolve_cover(&mut self, picker: &mut Picker, img_height: u16) {
+        let Some(url) = &self.cover_url else {
+            self.cover_protocol = None;
+            self.last_cover = None;
+            return;
+        };
+
+        let cache = ImageCache::global();
+        let current = cache.get_or_fetch(url);
+
+        let changed = match (&self.last_cover, &current) {
+            (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
+            (None, None) => false,
+            _ => true,
+        };
+
+        if changed {
+            self.cover_protocol = current
+                .as_ref()
+                .map(|img| picker.new_resize_protocol((**img).clone()));
+            self.last_cover = current;
+        }
+
+        if self.cover_protocol.is_none() {
+            if let Some(img) = &self.last_cover {
+                if img_height > 0 {
+                    self.cover_protocol = Some(picker.new_resize_protocol((**img).clone()));
+                }
+            }
+        }
+    }
+
     pub fn view(&self, frame: &mut Frame, area: Rect) {
+        self.view_inner(frame, area, None);
+    }
+
+    pub fn view_with_picker(&mut self, frame: &mut Frame, area: Rect, picker: &mut Picker) {
+        self.resolve_cover(picker, area.height.saturating_sub(2));
+        self.view_inner_mut(frame, area);
+    }
+
+    fn view_inner(&self, frame: &mut Frame, area: Rect, _picker: Option<()>) {
         let lines = self.lines.with(|l| l.clone());
         let styles = self.theme.get();
-        let content: Vec<Line<'static>> = lines
+
+        let content: Vec<Line<'static>> = Self::build_content(lines, &styles);
+
+        let mut block = Block::default();
+        if self.show_border {
+            block = block.borders(Borders::BOTTOM).border_style(styles.block);
+        }
+        let inner_area = block.inner(area);
+        frame.render_widget(block, area);
+
+        let text_area = ratatui::layout::Rect {
+            x: inner_area.x.saturating_add(1),
+            y: inner_area.y,
+            width: inner_area.width.saturating_sub(2),
+            height: inner_area.height.saturating_sub(1),
+        };
+
+        let paragraph = Paragraph::new(content);
+        frame.render_widget(paragraph, text_area);
+    }
+
+    fn view_inner_mut(&mut self, frame: &mut Frame, area: Rect) {
+        let lines = self.lines.with(|l| l.clone());
+        let styles = self.theme.get();
+
+        let has_cover = self.cover_protocol.is_some();
+        let inner_h = area.height.saturating_sub(2);
+        let img_w = if has_cover {
+            inner_h.saturating_mul(2).min(area.width / 4).max(4)
+        } else {
+            0
+        };
+
+        let content: Vec<Line<'static>> = Self::build_content(lines, &styles);
+
+        let mut block = Block::default();
+        if self.show_border {
+            block = block.borders(Borders::BOTTOM).border_style(styles.block);
+        }
+        let inner_area = block.inner(area);
+        frame.render_widget(block, area);
+
+        if img_w > 0 {
+            let img_area = Rect {
+                x: inner_area.x + 1,
+                y: inner_area.y,
+                width: img_w,
+                height: inner_h,
+            };
+
+            if let Some(proto) = &mut self.cover_protocol {
+                frame.render_stateful_widget(StatefulImage::new(), img_area, proto);
+            }
+
+            let text_x = inner_area.x + img_w + 2;
+            let text_w = inner_area.width.saturating_sub(img_w + 3);
+            let text_area = Rect {
+                x: text_x,
+                y: inner_area.y,
+                width: text_w,
+                height: inner_area.height,
+            };
+
+            let padded_text_area = ratatui::layout::Rect {
+                x: text_area.x,
+                y: text_area.y,
+                width: text_area.width.saturating_sub(1),
+                height: text_area.height.saturating_sub(1),
+            };
+            frame.render_widget(Paragraph::new(content), padded_text_area);
+        } else {
+            let padded_text_area = ratatui::layout::Rect {
+                x: inner_area.x.saturating_add(1),
+                y: inner_area.y,
+                width: inner_area.width.saturating_sub(2),
+                height: inner_area.height.saturating_sub(1),
+            };
+            let paragraph = Paragraph::new(content);
+            frame.render_widget(paragraph, padded_text_area);
+        }
+    }
+
+    fn build_content(
+        lines: im::Vector<HeaderLine>,
+        styles: &crate::framework::theme::ThemeStyles,
+    ) -> Vec<Line<'static>> {
+        lines
             .into_iter()
             .map(|line| match line {
                 HeaderLine::Text(text) => Line::from(vec![Span::styled(text, styles.text)]),
@@ -96,16 +251,7 @@ impl Header {
                 }
                 HeaderLine::Spans(spans) => Line::from(spans),
             })
-            .collect();
-
-        let mut block = Block::default();
-        if self.show_border {
-            block = block.borders(Borders::BOTTOM);
-        }
-        block = block.padding(ratatui::widgets::Padding::new(1, 1, 0, 1));
-
-        let paragraph = Paragraph::new(content).block(block);
-        frame.render_widget(paragraph, area);
+            .collect()
     }
 }
 
