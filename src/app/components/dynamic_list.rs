@@ -742,12 +742,16 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             let item_height = item.height;
             let is_selected = i == selected_pos.saturating_sub(self.visible_range.0);
 
-            let render_height = item_height.min(inner_area.y + inner_area.height - current_y);
+            let remaining_height = inner_area.y + inner_area.height - current_y;
+            if remaining_height < item_height {
+                break;
+            }
+
             let item_area = Rect {
                 x: inner_area.x,
                 y: current_y,
                 width: inner_area.width,
-                height: render_height,
+                height: item_height,
             };
 
             if is_selected {
@@ -813,14 +817,14 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             if let Some(cover_url) = &item.cover_url {
                 if let Some(picker) = ImageCache::global_picker() {
                     if let Some(img) = ImageCache::global().get_or_fetch(cover_url) {
-                        let mut img_w = render_height * 2;
+                        let mut img_w = item_height * 2;
                         img_w = img_w.min(text_area.width / 4).max(2);
 
                         let img_rect = Rect {
                             x: text_area.x,
                             y: text_area.y,
                             width: img_w,
-                            height: render_height,
+                            height: item_height,
                         };
 
                         let proto = self
@@ -836,7 +840,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                             x: text_x,
                             y: text_area.y,
                             width: text_w,
-                            height: render_height,
+                            height: item_height,
                         };
                     }
                 }
