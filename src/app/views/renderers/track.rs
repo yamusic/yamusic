@@ -250,11 +250,11 @@ impl ItemRenderer<Track> for TrackRenderer {
             styles.accent.add_modifier(Modifier::BOLD)
         };
 
-        let create_highlighted_spans = |text: &str,
-                                        width: usize,
-                                        base_style: Style,
-                                        match_positions: &[usize],
-                                        highlight_style: Style|
+        let highlight_spans = |text: &str,
+                               width: usize,
+                               base_style: Style,
+                               match_positions: &[usize],
+                               highlight_style: Style|
          -> Vec<Span<'static>> {
             let mut result = Vec::new();
             let mut current_segment = String::new();
@@ -319,7 +319,7 @@ impl ItemRenderer<Track> for TrackRenderer {
         } else {
             title_base_style
         };
-        line1.extend(create_highlighted_spans(
+        line1.extend(highlight_spans(
             &title,
             title_width + album_width,
             title_style,
@@ -331,7 +331,7 @@ impl ItemRenderer<Track> for TrackRenderer {
             format!("{}  ", ARTIST_ICON),
             styles.text_muted.remove_modifier(Modifier::BOLD),
         ));
-        line2.extend(create_highlighted_spans(
+        line2.extend(highlight_spans(
             &artists,
             artist_width + title_width,
             artist_base_style,
@@ -340,8 +340,8 @@ impl ItemRenderer<Track> for TrackRenderer {
         ));
 
         if self.show_album && album_width > 0 {
-            line2.push(Span::styled("  󰀥 ", styles.text_muted));
-            line2.extend(create_highlighted_spans(
+            line2.push(Span::styled(" 󰀥 ", styles.text_muted));
+            line2.extend(highlight_spans(
                 &album_title,
                 album_width,
                 album_base_style,
@@ -351,7 +351,7 @@ impl ItemRenderer<Track> for TrackRenderer {
         }
 
         if self.show_duration && !duration_str.is_empty() {
-            line1.push(Span::styled("󱑎", styles.text_muted));
+            line1.push(Span::styled("󰚭", styles.text_muted));
             let duration_formatted = format!("{:>5}", duration_str);
             line1.push(Span::styled(duration_formatted, styles.text_muted));
             line1.push(Span::raw("   "));

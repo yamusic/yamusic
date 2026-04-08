@@ -8,7 +8,10 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::framework::{signals::Signal, theme::ThemeStyles};
+use crate::{
+    framework::{signals::Signal, theme::ThemeStyles},
+    util::animation::Animation,
+};
 
 const TOAST_DURATION: f32 = 2.0;
 const SLIDE_IN_DURATION: f32 = 0.4;
@@ -100,8 +103,9 @@ impl ToastManager {
         {
             let elapsed = now.duration_since(started).as_secs_f32();
             let t = (elapsed / REPLACE_OUT_DURATION).min(1.0);
-            let opacity = 1.0 - ease_in_quad(t);
-            let y_offset = (ease_in_quad(t) * 2.0) as i16;
+            let eased = Animation::ease_in_quad(t as f64) as f32;
+            let opacity = 1.0 - eased;
+            let y_offset = (eased * 2.0) as i16;
             self.render_toast(frame, area, entry, opacity, 0, y_offset, &styles);
         }
 
@@ -110,7 +114,7 @@ impl ToastManager {
                 ToastPhase::SlideIn { started } => {
                     let elapsed = now.duration_since(started).as_secs_f32();
                     let t = (elapsed / SLIDE_IN_DURATION).min(1.0);
-                    let eased = ease_out_cubic(t);
+                    let eased = Animation::ease_out_cubic(t as f64) as f32;
                     let x_off = ((1.0 - eased) * 30.0) as i16;
                     (eased, x_off, 0)
                 }
@@ -118,7 +122,7 @@ impl ToastManager {
                 ToastPhase::SlideOutRight { started } => {
                     let elapsed = now.duration_since(started).as_secs_f32();
                     let t = (elapsed / SLIDE_OUT_DURATION).min(1.0);
-                    let eased = ease_in_quad(t);
+                    let eased = Animation::ease_in_quad(t as f64) as f32;
                     let x_off = (eased * 30.0) as i16;
                     (1.0 - eased, x_off, 0)
                 }
@@ -238,15 +242,6 @@ impl ToastManager {
 
         frame.render_widget(paragraph, toast_area);
     }
-}
-
-fn ease_in_quad(t: f32) -> f32 {
-    t * t
-}
-
-fn ease_out_cubic(t: f32) -> f32 {
-    let t = t - 1.0;
-    t * t * t + 1.0
 }
 
 fn blend_color(fg: Color, bg: Color, opacity: f32) -> Color {

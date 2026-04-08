@@ -14,6 +14,7 @@ use crate::framework::{
 
 use crate::app::signals::LyricsSignals;
 use crate::framework::reactive::{Memo, memo};
+use crate::util::animation::Animation;
 
 pub struct Lyrics {
     pub lines: Memo<Vec<(u64, String)>>,
@@ -139,7 +140,7 @@ impl<'a> Widget for LyricsWidget<'a> {
         } else {
             ((frac - 0.8) / 0.4).min(1.0)
         };
-        let eased_scroll = ease_in_out_cubic(scroll_frac);
+        let eased_scroll = Animation::ease_in_out_cubic(scroll_frac);
 
         let center_y_float = (inner.height / 2) as f64;
         let line_spacing = 2.0;
@@ -316,19 +317,12 @@ fn blend_colors(from: Color, to: Color, progress: f64) -> Color {
         _ => return to,
     };
 
-    let r = (r1 as f64 + (r2 as f64 - r1 as f64) * progress) as u8;
-    let g = (g1 as f64 + (g2 as f64 - g1 as f64) * progress) as u8;
-    let b = (b1 as f64 + (b2 as f64 - b1 as f64) * progress) as u8;
+    let p = Animation::clamp01(progress);
+    let r = Animation::lerp(r1 as f64, r2 as f64, p) as u8;
+    let g = Animation::lerp(g1 as f64, g2 as f64, p) as u8;
+    let b = Animation::lerp(b1 as f64, b2 as f64, p) as u8;
 
     Color::Rgb(r, g, b)
-}
-
-fn ease_in_out_cubic(t: f64) -> f64 {
-    if t < 0.5 {
-        4.0 * t * t * t
-    } else {
-        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
-    }
 }
 
 fn blend_color_bg(color: Color, opacity: f64) -> Color {
