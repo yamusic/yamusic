@@ -53,7 +53,7 @@ pub struct Header {
 
 impl Header {
     pub fn new(lines: Vec<HeaderLine>, theme: Signal<ThemeStyles>) -> Self {
-        let height = lines.len() as u16 + 2;
+        let height = lines.len() as u16 + 1;
         Self {
             lines: Signal::new(Vector::from(lines)),
             height,
@@ -68,7 +68,7 @@ impl Header {
     pub fn from_signal(lines: Signal<Vector<HeaderLine>>, theme: Signal<ThemeStyles>) -> Self {
         Self {
             lines,
-            height: 6,
+            height: 5,
             show_border: true,
             theme,
             cover_url: None,
@@ -166,7 +166,7 @@ impl Header {
             x: inner_area.x.saturating_add(1),
             y: inner_area.y,
             width: inner_area.width.saturating_sub(2),
-            height: inner_area.height.saturating_sub(1),
+            height: inner_area.height,
         };
 
         let paragraph = Paragraph::new(content);
@@ -177,14 +177,6 @@ impl Header {
         let lines = self.lines.with(|l| l.clone());
         let styles = self.theme.get();
 
-        let has_cover = self.cover_protocol.is_some();
-        let inner_h = area.height.saturating_sub(2);
-        let img_w = if has_cover {
-            inner_h.saturating_mul(2).min(area.width / 4).max(4)
-        } else {
-            0
-        };
-
         let content: Vec<Line<'static>> = Self::build_content(lines, &styles);
 
         let mut block = Block::default();
@@ -193,6 +185,14 @@ impl Header {
         }
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
+
+        let has_cover = self.cover_protocol.is_some();
+        let inner_h = inner_area.height;
+        let img_w = if has_cover {
+            inner_h.saturating_mul(2).min(area.width / 4).max(4)
+        } else {
+            0
+        };
 
         if img_w > 0 {
             let img_area = Rect {
@@ -219,7 +219,7 @@ impl Header {
                 x: text_area.x,
                 y: text_area.y,
                 width: text_area.width.saturating_sub(1),
-                height: text_area.height.saturating_sub(1),
+                height: text_area.height,
             };
             frame.render_widget(Paragraph::new(content), padded_text_area);
         } else {
@@ -227,7 +227,7 @@ impl Header {
                 x: inner_area.x.saturating_add(1),
                 y: inner_area.y,
                 width: inner_area.width.saturating_sub(2),
-                height: inner_area.height.saturating_sub(1),
+                height: inner_area.height,
             };
             let paragraph = Paragraph::new(content);
             frame.render_widget(paragraph, padded_text_area);
