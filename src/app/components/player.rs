@@ -554,8 +554,7 @@ impl PlayerBar {
             let total_label = format_duration(total);
             let current_w = current_label.len() as u16;
             let total_w = total_label.len() as u16;
-            let gap_w: u16 = 1;
-            let label_gap: u16 = 1;
+            let label_gap: u16 = 0;
 
             let target_gauge_w = (text_aw / 3).max(8);
             let side_need = current_w.max(total_w).saturating_add(label_gap);
@@ -581,7 +580,7 @@ impl PlayerBar {
                 text_x + text_aw.saturating_sub(gauge_w) / 2
             };
 
-            if text_aw > current_w + total_w + (gap_w * 2) {
+            if text_aw > current_w + total_w {
                 let current_x = gauge_x.saturating_sub(current_w + label_gap);
                 let total_x = gauge_x + gauge_w + label_gap;
 
@@ -615,6 +614,8 @@ impl PlayerBar {
                     .ratios(played, buffered)
                     .played_style(styles.progress_fg)
                     .buffered_style(styles.progress_bg)
+                    .delimiters("▕", "▏")
+                    .delimiter_style(styles.text_muted)
                     .remaining_style(
                         Style::default()
                             .fg(styles.text.bg.unwrap_or_default())
@@ -638,6 +639,8 @@ struct CustomGauge<'a> {
     played_ratio: f64,
     buffered_ratio: f64,
     use_unicode: bool,
+    delimiters: Vec<&'a str>,
+    delimiter_style: Style,
     style: Style,
     played_style: Style,
     buffered_style: Style,
@@ -664,6 +667,16 @@ impl<'a> CustomGauge<'a> {
         self
     }
 
+    fn delimiters(mut self, left: &'a str, right: &'a str) -> Self {
+        self.delimiters = vec![left, right];
+        self
+    }
+
+    fn delimiter_style(mut self, style: Style) -> Self {
+        self.delimiter_style = style;
+        self
+    }
+
     fn played_style<S: Into<Style>>(mut self, style: S) -> Self {
         self.played_style = style.into();
         self
@@ -684,13 +697,35 @@ impl<'a> CustomGauge<'a> {
             return;
         }
 
-        let width = gauge_area.width as f64;
+        let mut fill_left = gauge_area.left();
+        let mut fill_right = gauge_area.right();
+
+        if !self.delimiters.is_empty() && gauge_area.width >= 3 {
+            for y in gauge_area.top()..gauge_area.bottom() {
+                buf[(gauge_area.left(), y)]
+                    .set_symbol(self.delimiters.get(0).cloned().unwrap_or("│"))
+                    .set_fg(self.delimiter_style.fg.unwrap_or_default());
+
+                buf[(gauge_area.right() - 1, y)]
+                    .set_symbol(self.delimiters.get(1).cloned().unwrap_or("▕"))
+                    .set_fg(self.delimiter_style.fg.unwrap_or_default());
+            }
+
+            fill_left = fill_left.saturating_add(1);
+            fill_right = fill_right.saturating_sub(1);
+        }
+
+        if fill_left >= fill_right {
+            return;
+        }
+
+        let width = (fill_right - fill_left) as f64;
         let played_pos = width * self.played_ratio;
         let buffered_pos = width * self.buffered_ratio;
 
         for y in gauge_area.top()..gauge_area.bottom() {
-            for x in gauge_area.left()..gauge_area.right() {
-                let pos = (x - gauge_area.left()) as f64;
+            for x in fill_left..fill_right {
+                let pos = (x - fill_left) as f64;
 
                 let mut symbol = symbols::block::FULL;
                 let mut style = self.remaining_style;
