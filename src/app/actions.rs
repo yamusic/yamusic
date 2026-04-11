@@ -100,6 +100,7 @@ pub enum Route {
     Lyrics,
     Queue,
     Effects,
+    ThemePicker,
     Settings,
 }
 
@@ -117,6 +118,7 @@ impl Route {
             Route::Lyrics => "Lyrics".to_string(),
             Route::Queue => "Queue".to_string(),
             Route::Effects => "Effects".to_string(),
+            Route::ThemePicker => "Theme Picker".to_string(),
             Route::Settings => "Settings".to_string(),
         }
     }

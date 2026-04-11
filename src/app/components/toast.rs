@@ -9,7 +9,8 @@ use ratatui::{
 };
 
 use crate::{
-    framework::{signals::Signal, theme::ThemeStyles},
+    app::theme::theme,
+    framework::signals::Signal,
     util::animation::Animation,
 };
 
@@ -36,16 +37,14 @@ struct ToastEntry {
 pub struct ToastManager {
     current: Option<ToastEntry>,
     outgoing: Option<ToastEntry>,
-    theme: Signal<ThemeStyles>,
     is_animating: Signal<bool>,
 }
 
 impl ToastManager {
-    pub fn new(theme: Signal<ThemeStyles>) -> Self {
+    pub fn new() -> Self {
         Self {
             current: None,
             outgoing: None,
-            theme,
             is_animating: Signal::new(false),
         }
     }
@@ -94,7 +93,6 @@ impl ToastManager {
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let now = Instant::now();
-        let styles = self.theme.get();
 
         self.tick_phases(now);
 
@@ -106,7 +104,7 @@ impl ToastManager {
             let eased = Animation::ease_in_quad(t as f64) as f32;
             let opacity = 1.0 - eased;
             let y_offset = (eased * 2.0) as i16;
-            self.render_toast(frame, area, entry, opacity, 0, y_offset, &styles);
+            self.render_toast(frame, area, entry, opacity, 0, y_offset);
         }
 
         if let Some(entry) = &self.current {
@@ -129,7 +127,7 @@ impl ToastManager {
                 ToastPhase::FadeOutDown { .. } => (0.0, 0, 0),
             };
             if opacity > 0.01 {
-                self.render_toast(frame, area, entry, opacity, x_offset, y_offset, &styles);
+                self.render_toast(frame, area, entry, opacity, x_offset, y_offset);
             }
         }
     }
@@ -182,8 +180,10 @@ impl ToastManager {
         opacity: f32,
         x_offset: i16,
         y_offset: i16,
-        styles: &ThemeStyles,
     ) {
+        let colors = theme();
+        let text_style = Style::default().fg(colors.text.primary).bg(colors.bg.base);
+        let accent_style = Style::default().fg(colors.accent.primary).bg(colors.bg.base);
         let mut msg_lines = entry.message.clone();
 
         if let Some(icon) = &entry.icon
@@ -214,10 +214,10 @@ impl ToastManager {
             return;
         }
 
-        let accent_fg = styles.accent.fg.unwrap_or(Color::Yellow);
-        let bg = styles.text.bg.unwrap_or(Color::Black);
+        let accent_fg = accent_style.fg.unwrap_or(Color::Yellow);
+        let bg = text_style.bg.unwrap_or(Color::Black);
         let border_color = blend_color(accent_fg, bg, opacity);
-        let _text_color = blend_color(styles.text.fg.unwrap_or(Color::White), bg, opacity);
+        let _text_color = blend_color(text_style.fg.unwrap_or(Color::White), bg, opacity);
 
         frame.render_widget(Clear, toast_area);
 
@@ -231,7 +231,7 @@ impl ToastManager {
                 let base_fg = span
                     .style
                     .fg
-                    .unwrap_or(styles.text.fg.unwrap_or(Color::White));
+                    .unwrap_or(text_style.fg.unwrap_or(Color::White));
                 span.style = span.style.fg(blend_color(base_fg, bg, opacity));
             }
         }

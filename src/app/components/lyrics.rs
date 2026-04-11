@@ -7,10 +7,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::framework::{
-    reactive::Signal,
-    theme::{ThemeStyles, global_theme},
-};
+use crate::{app::theme::theme, framework::reactive::Signal};
 
 use crate::app::signals::LyricsSignals;
 use crate::framework::reactive::{Memo, memo};
@@ -44,22 +41,19 @@ impl Lyrics {
 struct LyricsWidget<'a> {
     lines: &'a [(u64, String)],
     position_ms: u64,
-    styles: ThemeStyles,
 }
 
 impl<'a> LyricsWidget<'a> {
     fn new(lines: &'a [(u64, String)], position_ms: u64) -> Self {
-        let styles = global_theme().styles().get();
-        Self {
-            lines,
-            position_ms,
-            styles,
-        }
+        Self { lines, position_ms }
     }
 }
 
 impl<'a> Widget for LyricsWidget<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let text_muted = theme().muted;
+        let accent_color = theme().accent.primary;
+        let muted_color = text_muted.fg.unwrap_or_default();
         let inner = Rect {
             x: area.x + 1,
             y: area.y + 1,
@@ -71,7 +65,7 @@ impl<'a> Widget for LyricsWidget<'a> {
             let hint = "No lyrics available";
             let x = inner.x + (inner.width.saturating_sub(hint.len() as u16)) / 2;
             let y = inner.y + inner.height / 2;
-            buf.set_stringn(x, y, hint, inner.width as usize, self.styles.text_muted);
+            buf.set_stringn(x, y, hint, inner.width as usize, text_muted);
             return;
         }
 
@@ -146,9 +140,6 @@ impl<'a> Widget for LyricsWidget<'a> {
         let line_spacing = 2.0;
 
         let positions_to_render = [-2, -1, 0, 1, 2, 3];
-        let accent_color = self.styles.accent.fg.unwrap_or_default();
-        let muted_color = self.styles.text_muted.fg.unwrap_or_default();
-
         for &relative_pos in &positions_to_render {
             let line_idx = if intro_wait_active {
                 if relative_pos == 0 {
@@ -335,7 +326,7 @@ fn blend_color_bg(color: Color, opacity: f64) -> Color {
         _ => return color,
     };
 
-    let bg_color = global_theme().color("background");
+    let bg_color = theme().bg.base;
     let (bg_r, bg_g, bg_b) = match bg_color {
         Color::Rgb(r, g, b) => (r, g, b),
         _ => (13, 13, 13),

@@ -8,7 +8,7 @@ use ratatui::{
 
 use super::base::{EffectCategory, EffectMeta, ParamMeta};
 use super::util::edge_fade_curve;
-use crate::framework::theme::ThemeColor;
+use crate::app::theme::theme;
 
 const DEFAULT_RATE_HZ: f32 = 1.5;
 const DEFAULT_DEPTH: f32 = 0.7;
@@ -110,7 +110,7 @@ impl ChorusRenderer {
 
         let beam_length = (w as f32 * (BEAM_WIDTH_BASE + mix * BEAM_WIDTH_MIX_FACTOR)) as usize;
         let time = (rate * 2.0) % std::f32::consts::TAU;
-        let bg_color = crate::framework::theme::global_theme().color("background");
+        let bg_color = theme().bg.base;
 
         let mut lines = vec![Line::default(); h];
 
@@ -225,12 +225,25 @@ impl ChorusRenderer {
     }
 
     fn blend_color(&self, fg: Color, bg: Color, fade: f32) -> Color {
-        ThemeColor::from(fg)
-            .blend(ThemeColor::from(bg), 1.0 - fade)
-            .to_ratatui()
+        let fade = fade.clamp(0.0, 1.0);
+        let (fr, fgc, fb) = to_rgb(fg, (255, 255, 255));
+        let (br, bgc, bb) = to_rgb(bg, (0, 0, 0));
+
+        let blend = |bgc: u8, fgc: u8| -> u8 {
+            ((bgc as f32) + ((fgc as f32) - (bgc as f32)) * fade).round() as u8
+        };
+
+        Color::Rgb(blend(br, fr), blend(bgc, fgc), blend(bb, fb))
     }
 
     pub fn meta(&self) -> &EffectMeta {
         &self.meta
+    }
+}
+
+fn to_rgb(color: Color, fallback: (u8, u8, u8)) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        _ => fallback,
     }
 }

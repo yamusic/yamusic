@@ -1,16 +1,17 @@
 use ratatui::{
-    Frame,
     layout::Rect,
     style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
+    Frame,
 };
-use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
+use ratatui_image::{picker::Picker, protocol::StatefulProtocol, StatefulImage};
 use std::sync::Arc;
 
 use crate::{
+    app::theme::theme,
     cache::image::ImageCache,
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::signals::Signal,
 };
 use im::Vector;
 use image::DynamicImage;
@@ -45,32 +46,29 @@ pub struct Header {
     lines: Signal<Vector<HeaderLine>>,
     height: u16,
     show_border: bool,
-    theme: Signal<ThemeStyles>,
     cover_url: Option<String>,
     cover_protocol: Option<StatefulProtocol>,
     last_cover: Option<Arc<DynamicImage>>,
 }
 
 impl Header {
-    pub fn new(lines: Vec<HeaderLine>, theme: Signal<ThemeStyles>) -> Self {
+    pub fn new(lines: Vec<HeaderLine>) -> Self {
         let height = lines.len() as u16 + 1;
         Self {
             lines: Signal::new(Vector::from(lines)),
             height,
             show_border: true,
-            theme,
             cover_url: None,
             cover_protocol: None,
             last_cover: None,
         }
     }
 
-    pub fn from_signal(lines: Signal<Vector<HeaderLine>>, theme: Signal<ThemeStyles>) -> Self {
+    pub fn from_signal(lines: Signal<Vector<HeaderLine>>) -> Self {
         Self {
             lines,
             height: 5,
             show_border: true,
-            theme,
             cover_url: None,
             cover_protocol: None,
             last_cover: None,
@@ -151,13 +149,13 @@ impl Header {
 
     fn view_inner(&self, frame: &mut Frame, area: Rect, _picker: Option<()>) {
         let lines = self.lines.with(|l| l.clone());
-        let styles = self.theme.get();
+        let border_style = theme().unfocused_border;
 
-        let content: Vec<Line<'static>> = Self::build_content(lines, &styles);
+        let content: Vec<Line<'static>> = Self::build_content(lines);
 
         let mut block = Block::default();
         if self.show_border {
-            block = block.borders(Borders::BOTTOM).border_style(styles.block);
+            block = block.borders(Borders::BOTTOM).border_style(border_style);
         }
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
@@ -175,13 +173,13 @@ impl Header {
 
     fn view_inner_mut(&mut self, frame: &mut Frame, area: Rect) {
         let lines = self.lines.with(|l| l.clone());
-        let styles = self.theme.get();
+        let border_style = theme().unfocused_border;
 
-        let content: Vec<Line<'static>> = Self::build_content(lines, &styles);
+        let content: Vec<Line<'static>> = Self::build_content(lines);
 
         let mut block = Block::default();
         if self.show_border {
-            block = block.borders(Borders::BOTTOM).border_style(styles.block);
+            block = block.borders(Borders::BOTTOM).border_style(border_style);
         }
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
@@ -234,21 +232,24 @@ impl Header {
         }
     }
 
-    fn build_content(
-        lines: im::Vector<HeaderLine>,
-        styles: &crate::framework::theme::ThemeStyles,
-    ) -> Vec<Line<'static>> {
+    fn build_content(lines: im::Vector<HeaderLine>) -> Vec<Line<'static>> {
+        let colors = theme();
+        let text_style = ratatui::style::Style::default()
+            .fg(colors.text.primary)
+            .bg(colors.bg.base);
+        let muted_style = theme().muted;
+        let accent_style = ratatui::style::Style::default()
+            .fg(colors.accent.primary)
+            .bg(colors.bg.base);
         lines
             .into_iter()
             .map(|line| match line {
-                HeaderLine::Text(text) => Line::from(vec![Span::styled(text, styles.text)]),
+                HeaderLine::Text(text) => Line::from(vec![Span::styled(text, text_style)]),
                 HeaderLine::Title(text) => Line::from(vec![Span::styled(
                     text,
-                    styles.accent.add_modifier(Modifier::BOLD),
+                    accent_style.add_modifier(Modifier::BOLD),
                 )]),
-                HeaderLine::Subtitle(text) => {
-                    Line::from(vec![Span::styled(text, styles.text_muted)])
-                }
+                HeaderLine::Subtitle(text) => Line::from(vec![Span::styled(text, muted_style)]),
                 HeaderLine::Spans(spans) => Line::from(spans),
             })
             .collect()
@@ -263,7 +264,6 @@ impl HeaderBuilder {
         owner: &str,
         track_count: usize,
         duration: Option<String>,
-        theme: Signal<ThemeStyles>,
     ) -> Header {
         let mut lines = vec![
             HeaderLine::title(title),
@@ -275,16 +275,10 @@ impl HeaderBuilder {
             lines.push(HeaderLine::text(dur));
         }
 
-        Header::new(lines, theme)
+        Header::new(lines)
     }
 
-    pub fn album(
-        title: &str,
-        artists: &str,
-        year: Option<i32>,
-        track_count: usize,
-        theme: Signal<ThemeStyles>,
-    ) -> Header {
+    pub fn album(title: &str, artists: &str, year: Option<i32>, track_count: usize) -> Header {
         let mut lines = vec![HeaderLine::title(title), HeaderLine::subtitle(artists)];
 
         if let Some(y) = year {
@@ -293,33 +287,21 @@ impl HeaderBuilder {
             lines.push(HeaderLine::text(format!("{} tracks", track_count)));
         }
 
-        Header::new(lines, theme)
+        Header::new(lines)
     }
 
-    pub fn artist(
-        name: &str,
-        genres: &str,
-        likes: u64,
-        track_count: usize,
-        theme: Signal<ThemeStyles>,
-    ) -> Header {
-        Header::new(
-            vec![
-                HeaderLine::title(name),
-                HeaderLine::subtitle(genres),
-                HeaderLine::text(format!("{} tracks • {} likes", track_count, likes)),
-            ],
-            theme,
-        )
+    pub fn artist(name: &str, genres: &str, likes: u64, track_count: usize) -> Header {
+        Header::new(vec![
+            HeaderLine::title(name),
+            HeaderLine::subtitle(genres),
+            HeaderLine::text(format!("{} tracks • {} likes", track_count, likes)),
+        ])
     }
 
-    pub fn search(query: &str, result_count: usize, theme: Signal<ThemeStyles>) -> Header {
-        Header::new(
-            vec![
-                HeaderLine::title(format!("Search: {}", query)),
-                HeaderLine::text(format!("{} results", result_count)),
-            ],
-            theme,
-        )
+    pub fn search(query: &str, result_count: usize) -> Header {
+        Header::new(vec![
+            HeaderLine::title(format!("Search: {}", query)),
+            HeaderLine::text(format!("{} results", result_count)),
+        ])
     }
 }

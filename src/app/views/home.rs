@@ -1,10 +1,10 @@
 use im::Vector;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::{
@@ -13,8 +13,9 @@ use crate::{
         components::{DropdownAction, FuzzyDropdown, Spinner},
         keymap::Key,
         state::wave::{StationCategory, StationItem},
+        theme::theme,
     },
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::signals::Signal,
 };
 use std::collections::HashSet;
 
@@ -25,15 +26,10 @@ pub struct HomeView {
     show_settings: Signal<bool>,
     focused_index: usize,
     dropdown: Option<FuzzyDropdown<StationItem>>,
-    theme: Signal<ThemeStyles>,
 }
 
 impl HomeView {
-    pub fn new(
-        waves: Signal<Vector<StationCategory>>,
-        loading: Signal<bool>,
-        theme: Signal<ThemeStyles>,
-    ) -> Self {
+    pub fn new(waves: Signal<Vector<StationCategory>>, loading: Signal<bool>) -> Self {
         Self {
             waves,
             loading,
@@ -41,7 +37,6 @@ impl HomeView {
             show_settings: Signal::new(false),
             focused_index: 0,
             dropdown: None,
-            theme,
         }
     }
 
@@ -242,7 +237,11 @@ impl HomeView {
     }
 
     fn render_settings(&mut self, frame: &mut Frame, area: Rect) {
-        let styles = self.theme.get();
+        let colors = theme();
+        let text_style = Style::default().fg(colors.text.primary);
+        let text_muted = colors.muted;
+        let border_style = colors.unfocused_border;
+        let accent_style = Style::default().fg(colors.accent.primary);
         let waves = self.waves.get();
 
         if self.selections.len() != waves.len() {
@@ -250,7 +249,7 @@ impl HomeView {
         }
 
         let overlay_area = centered_rect(area, 60, 80);
-        f_render_block(frame, overlay_area, " My Wave Settings ", &styles);
+        f_render_block(frame, overlay_area, " My Wave Settings ");
 
         if self.loading.get() {
             let spinner_area = Rect {
@@ -302,9 +301,9 @@ impl HomeView {
             };
 
             let (border_style, title_style, text_style) = if is_focused {
-                (styles.accent, styles.accent, styles.accent)
+                (accent_style, accent_style, accent_style)
             } else {
-                (styles.block, styles.text, styles.text)
+                (border_style, text_style, text_style)
             };
 
             let paragraph = Paragraph::new(Span::styled(selected_text, text_style)).block(
@@ -329,25 +328,28 @@ impl HomeView {
                 width: anchor.width / 2,
                 height: overlay_area.bottom().saturating_sub(anchor.y + 1),
             };
-            dropdown.view(frame, dropdown_area, &styles, 10);
+            dropdown.view(frame, dropdown_area, 10);
         }
 
-        let instructions = Paragraph::new(
-            "↑↓: Navigate | Enter: Select | Esc: Close Settings | w: Start Wave | r/R: Reset selection",
-        )
-        .alignment(Alignment::Center)
-        .style(styles.text_muted);
-        frame.render_widget(instructions, chunks[1]);
+        let hint = "↑↓: Navigate | Enter: Select | Esc: Close Settings | w: Start Wave | r/R: Reset selection(s)";
+        let hint_width = hint.chars().count() as u16;
+        let hint_x = chunks[1]
+            .x
+            .saturating_add(chunks[1].width.saturating_sub(hint_width) / 2);
+        let hint_y = chunks[1].y + chunks[1].height.saturating_sub(1) / 2;
+        frame
+            .buffer_mut()
+            .set_stringn(hint_x, hint_y, hint, chunks[1].width as usize, text_muted);
     }
 }
 
-fn f_render_block(frame: &mut Frame, area: Rect, title: &str, styles: &ThemeStyles) {
-    frame.render_widget(Clear, area);
+fn f_render_block(frame: &mut Frame, area: Rect, title: &str) {
+    let colors = theme();
+    let border_focused = colors.focused_border;
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .border_style(styles.block_focused)
-        .style(styles.text);
+        .border_style(border_focused);
     frame.render_widget(block, area);
 }
 

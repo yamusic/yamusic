@@ -3,7 +3,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::framework::theme::global_theme;
+use crate::app::theme::theme;
 
 #[derive(Debug, Clone)]
 pub struct ListItem<'a> {
@@ -26,7 +26,7 @@ impl<'a> ListItem<'a> {
     }
 
     pub fn two_line(title: impl Into<String>, subtitle: impl Into<String>) -> Self {
-        let muted_style = global_theme().style("text_muted");
+        let muted_style = Style::default().fg(theme().text.muted);
         Self {
             content: vec![
                 Line::from(title.into()),

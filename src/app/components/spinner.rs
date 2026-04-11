@@ -8,7 +8,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::framework::theme::global_theme;
+use crate::app::theme::theme;
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -25,10 +25,10 @@ pub struct Spinner {
 
 impl Default for Spinner {
     fn default() -> Self {
-        let styles = global_theme().styles().get();
+        let colors = theme();
         Self {
             label: None,
-            style: styles.accent,
+            style: Style::default().fg(colors.accent.primary).bg(colors.bg.base),
         }
     }
 }

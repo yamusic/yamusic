@@ -35,13 +35,13 @@ use super::{
     state::{SearchState, WaveSessionState},
     terminal::{Terminal, TerminalEvent, TickRate},
     views::{
-        EffectsOverlay, HomeView, OverlayRenderer, PlaylistListView, SearchView, TrackListContext,
-        TrackListView,
+        EffectsOverlay, HomeView, OverlayRenderer, PlaylistListView, SearchView, ThemePicker,
+        TrackListContext, TrackListView,
     },
 };
+use crate::app::theme::{self as app_theme, Theme, theme};
 use crate::framework::component::Component;
-use crate::framework::reactive::{Signal, With, memo};
-use crate::framework::theme::{Theme, ThemeStyles};
+use crate::framework::reactive::{With, memo};
 
 pub struct App {
     signals: Arc<AppSignals>,
@@ -52,7 +52,6 @@ pub struct App {
     player_bar: PlayerBar,
     visualizer: Visualizer,
     lyrics: Lyrics,
-    theme: Signal<ThemeStyles>,
     sidebar: Sidebar,
     sidebar_visible: bool,
     should_quit: bool,
@@ -68,12 +67,10 @@ pub struct App {
     track_list_view: Option<TrackListView>,
 
     current_route: Route,
-
     key_resolver: KeyResolver,
-
     toast_manager: ToastManager,
-
     effects_overlay: EffectsOverlay,
+    theme_picker: ThemePicker,
 }
 
 impl App {
@@ -83,6 +80,8 @@ impl App {
         event_tx: Sender<Event>,
         event_rx: Receiver<Event>,
     ) -> color_eyre::Result<Self> {
+        app_theme::bootstrap();
+
         let audio_signals = audio.signals().clone();
         let effect_handles = audio.get_effect_handles();
 
@@ -98,8 +97,6 @@ impl App {
             theme: Arc::new(Theme::default()),
             is_focused: crate::framework::reactive::signal(true),
         });
-
-        let theme_styles = signals.theme.styles().clone();
 
         let is_current_liked = memo({
             let track_id = signals.audio.current_track_id.clone();
@@ -140,13 +137,12 @@ impl App {
             repeat_mode: signals.audio.repeat_mode.clone(),
             cover_url: signals.audio.current_cover_url.clone(),
         };
-        let player_bar = PlayerBar::new(player_signals, theme_styles.clone());
+        let player_bar = PlayerBar::new(player_signals);
 
         let visualizer = Visualizer::new(
             signals.audio.amplitude.clone(),
             signals.audio.is_playing.clone(),
             signals.audio.current_track.clone(),
-            theme_styles.clone(),
         );
 
         let lyrics = Lyrics::new(signals.lyrics.clone(), signals.audio.position_ms.clone());
@@ -179,24 +175,24 @@ impl App {
             event_tx: event_tx.clone(),
             event_rx,
             player_bar,
-            sidebar: Sidebar::new(theme_styles.clone()),
+            sidebar: Sidebar::new(),
             sidebar_visible: true,
             should_quit: false,
             picker: None,
             search_state,
             wave_state,
-            home_view: HomeView::new(wave_state_waves, wave_state_loading, theme_styles.clone()),
+            home_view: HomeView::new(wave_state_waves, wave_state_loading),
             playlist_list_view: None,
             liked_view: None,
-            search_view: SearchView::new(&signals, theme_styles.clone()),
+            search_view: SearchView::new(&signals),
             track_list_view: None,
             current_route: Route::Home,
             key_resolver: KeyResolver::new(),
             visualizer,
             lyrics,
-            theme: theme_styles.clone(),
-            toast_manager: ToastManager::new(theme_styles),
+            toast_manager: ToastManager::new(),
             effects_overlay: EffectsOverlay::new(effect_handles),
+            theme_picker: ThemePicker::new(),
         })
     }
 
@@ -864,7 +860,7 @@ impl App {
                     let source = Arc::new(PlaylistDataSource::new(
                         self.signals.library.playlists.clone(),
                     ));
-                    let view = PlaylistListView::new(source.clone(), self.theme.clone());
+                    let view = PlaylistListView::new(source.clone());
                     self.playlist_list_view = Some(view);
                 }
             }
@@ -942,11 +938,21 @@ impl App {
         if in_overlay {
             self.key_resolver.reset();
 
-            if let Some(Route::Effects) = self.signals.navigation.overlay.get() {
-                let action = self.effects_overlay.handle_key(&key);
-                if !matches!(action, Action::None) {
-                    return action;
+            match self.signals.navigation.overlay.get() {
+                Some(Route::ThemePicker) => {
+                    if let Some(action) = self.theme_picker.handle_key_action(&key) {
+                        return action;
+                    }
+
+                    return Action::None;
                 }
+                Some(Route::Effects) => {
+                    let action = self.effects_overlay.handle_key(&key);
+                    if !matches!(action, Action::None) {
+                        return action;
+                    }
+                }
+                Some(_) | None => {}
             }
 
             if matches!(key, Key::Esc) {
@@ -1222,16 +1228,17 @@ impl App {
 
         let area = frame.area();
 
-        let styles = self.theme.get();
-        frame.buffer_mut().set_style(area, styles.text);
+        let colors = theme();
+        let text_style = ratatui::style::Style::default()
+            .fg(colors.text.primary)
+            .bg(colors.bg.base);
+        let block = colors.unfocused_border;
+        let block_focused = colors.focused_border;
+        frame.buffer_mut().set_style(area, text_style);
 
         let popup_open =
             matches!(self.current_route, Route::Home) && self.home_view.is_popup_open();
-        let bg_border = if popup_open {
-            styles.block
-        } else {
-            styles.block_focused
-        };
+        let bg_border = if popup_open { block } else { block_focused };
 
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -1265,6 +1272,7 @@ impl App {
 
         match &self.current_route {
             Route::Home => {
+                self.visualizer.set_full_blocks(popup_open);
                 if self.signals.is_focused.get() {
                     self.visualizer.view(frame, content_area);
                 }
@@ -1296,9 +1304,9 @@ impl App {
                 frame,
                 content_area,
                 &overlay,
-                &self.theme,
                 &mut self.lyrics,
                 &mut self.effects_overlay,
+                &mut self.theme_picker,
             );
         }
 

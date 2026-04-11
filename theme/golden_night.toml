@@ -1,0 +1,80 @@
+[meta]
+name = "Golden Night"
+author = "vyfor"
+variant = "dark"
+version = "1.0"
+description = "Signature YaMusic dark theme with warm yellow accents"
+
+[palette]
+gold_500 = "#F2C94C"
+gold_400 = "#F7DC7A"
+gold_300 = "#FDEEA0"
+amber_500 = "#D4922A"
+orange_500 = "#C47828"
+success_500 = "#4EC874"
+error_500 = "#E85555"
+info_500 = "#5AADEE"
+bg_950 = "#07080C"
+bg_900 = "#0B0D14"
+bg_850 = "#0F1219"
+bg_800 = "#141820"
+bg_700 = "#1C2233"
+bg_selection = "#0F1219"
+bg_selection_active = "#141820"
+text_050 = "#F2F4F8"
+text_200 = "#CDD4E4"
+text_400 = "#8A96AE"
+text_500 = "#6B7892"
+
+[tokens]
+"text.primary" = "text_050"
+"text.secondary" = "text_200"
+"text.muted" = "text_400"
+"text.dim" = "text_500"
+"bg.base" = "bg_950"
+"bg.panel" = "bg_900"
+"bg.code" = "bg_850"
+"bg.highlight" = "bg_800"
+"bg.elevated" = "bg_800"
+"bg.active" = "bg_700"
+"bg.selection" = "bg_selection"
+"accent.primary" = "gold_500"
+"accent.secondary" = "amber_500"
+"accent.tertiary" = "orange_500"
+"accent.deep" = "gold_400"
+success = "success_500"
+error = "error_500"
+warning = "gold_500"
+info = "info_500"
+"border.focused" = "gold_500"
+"border.unfocused" = "text_500"
+"code.keyword" = "gold_500"
+"code.function" = "gold_400"
+"code.string" = "gold_300"
+"code.number" = "amber_500"
+"code.comment" = "text_500"
+"code.type" = "gold_500"
+"code.line_number" = "text_500"
+
+[styles]
+keyword = { fg = "accent.primary", bold = true }
+line_number = { fg = "code.line_number" }
+cursor_line = { bg = "bg.highlight" }
+selected = { fg = "gold_400", bg = "bg_selection" }
+active_selected = { fg = "gold_500", bg = "bg_selection_active", bold = true }
+focused_border = { fg = "border.focused" }
+unfocused_border = { fg = "border.unfocused" }
+success_style = { fg = "success" }
+error_style = { fg = "error" }
+warning_style = { fg = "warning" }
+info_style = { fg = "info" }
+dimmed = { fg = "text.dim" }
+muted = { fg = "text.muted" }
+inline_code = { fg = "gold_300", bg = "bg.code" }
+
+[gradients]
+primary = ["gold_500", "amber_500"]
+warm = ["amber_500", "orange_500"]
+success_gradient = ["success_500", "gold_400"]
+error_gradient = ["error_500", "orange_500"]
+aurora = ["gold_500", "gold_400", "gold_300", "amber_500", "orange_500"]

@@ -16,9 +16,10 @@ use crate::{
         keymap::Key,
         signals::AppSignals,
         state::SearchTab,
+        theme::theme,
         views::{AlbumRenderer, ArtistRenderer, PlaylistRenderer, TrackRenderer},
     },
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::signals::Signal,
 };
 
 pub struct SearchView {
@@ -43,19 +44,17 @@ pub struct SearchView {
 
     has_searched: bool,
 
-    theme: Signal<ThemeStyles>,
 }
 
 impl SearchView {
-    pub fn new(signals: &AppSignals, theme: Signal<ThemeStyles>) -> Self {
+    pub fn new(signals: &AppSignals) -> Self {
         let track_source = Arc::new(StaticDataSource::new(Vec::new()));
         let track_renderer = Arc::new(TrackRenderer::new(
             signals.library.clone(),
             signals.audio.current_track_id.clone(),
             signals.audio.is_playing.clone(),
-            theme.clone(),
         ));
-        let track_list = DynamicList::new(track_source.clone(), track_renderer, theme.clone())
+        let track_list = DynamicList::new(track_source.clone(), track_renderer)
             .with_fuzzy(|track| {
                 use crate::app::components::FuzzyFields;
                 let title = track.title.clone().unwrap_or_default();
@@ -78,7 +77,7 @@ impl SearchView {
 
         let album_source = Arc::new(StaticDataSource::new(Vec::new()));
         let album_renderer = Arc::new(AlbumRenderer::new());
-        let album_list = DynamicList::new(album_source.clone(), album_renderer, theme.clone())
+        let album_list = DynamicList::new(album_source.clone(), album_renderer)
             .with_fuzzy(|album| {
                 use crate::app::components::FuzzyFields;
                 let title = album.title.clone().unwrap_or_default();
@@ -100,7 +99,7 @@ impl SearchView {
 
         let artist_source = Arc::new(StaticDataSource::new(Vec::new()));
         let artist_renderer = Arc::new(ArtistRenderer::new());
-        let artist_list = DynamicList::new(artist_source.clone(), artist_renderer, theme.clone())
+        let artist_list = DynamicList::new(artist_source.clone(), artist_renderer)
             .with_fuzzy(|artist| {
                 use crate::app::components::FuzzyFields;
                 let name = artist.name.clone().unwrap_or_default();
@@ -121,7 +120,7 @@ impl SearchView {
         let playlist_source = Arc::new(StaticDataSource::new(Vec::new()));
         let playlist_renderer = Arc::new(PlaylistRenderer::new());
         let playlist_list =
-            DynamicList::new(playlist_source.clone(), playlist_renderer, theme.clone()).with_fuzzy(
+            DynamicList::new(playlist_source.clone(), playlist_renderer).with_fuzzy(
                 |playlist| {
                     use crate::app::components::FuzzyFields;
                     let owner = playlist.owner.name.clone().unwrap_or_default();
@@ -150,7 +149,6 @@ impl SearchView {
             is_loading: Signal::new(false),
             is_loading_more: Signal::new(false),
             has_searched: false,
-            theme,
         }
     }
 
@@ -408,13 +406,11 @@ impl SearchView {
         let query = self.query.get();
         let in_input = self.input_mode.get();
 
-        let styles = self.theme.get();
         let border_style = if in_input {
-            styles.block_focused
+            theme().focused_border
         } else {
-            styles.block
+            theme().unfocused_border
         };
-
         let cursor = if in_input { "│" } else { "" };
         let prompt = if query.is_empty() && !in_input {
             "Press '/' to search...".to_string()
@@ -445,34 +441,36 @@ impl SearchView {
                 format!("{} {}", icon, t.title())
             })
             .collect();
-        let styles = self.theme.get();
+        let themed = theme();
+        let text_muted = themed.muted;
+        let selected = themed.selected;
 
         let tabs = Tabs::new(titles)
             .block(Block::default().borders(Borders::BOTTOM))
             .select(tab.index())
-            .style(styles.text_muted)
-            .highlight_style(styles.selected.add_modifier(Modifier::BOLD));
+            .style(text_muted)
+            .highlight_style(selected.add_modifier(Modifier::BOLD));
 
         frame.render_widget(tabs, area);
     }
 
     fn render_results(&mut self, frame: &mut Frame, area: Rect) {
         if self.is_loading.get() && !self.has_searched {
-            let styles = self.theme.get();
+            let colors = theme();
             let spinner = Spinner::new()
                 .with_label("Searching...")
-                .with_style(styles.accent);
+                .with_style(ratatui::style::Style::default().fg(colors.accent.primary));
             spinner.view(frame, area);
             return;
         }
 
-        let styles = self.theme.get();
+        let text_muted = theme().muted;
 
         match self.current_tab.get() {
             SearchTab::Tracks => {
                 if self.track_source.total().is_none_or(|t| t == 0) && self.has_searched {
                     let paragraph = Paragraph::new("No tracks found")
-                        .style(styles.text_muted)
+                        .style(text_muted)
                         .block(Block::default().borders(Borders::NONE));
                     frame.render_widget(paragraph, area);
                 } else {
@@ -482,7 +480,7 @@ impl SearchView {
             SearchTab::Albums => {
                 if self.album_source.total().is_none_or(|t| t == 0) && self.has_searched {
                     let paragraph = Paragraph::new("No albums found")
-                        .style(styles.text_muted)
+                        .style(text_muted)
                         .block(Block::default().borders(Borders::NONE));
                     frame.render_widget(paragraph, area);
                 } else {
@@ -492,7 +490,7 @@ impl SearchView {
             SearchTab::Artists => {
                 if self.artist_source.total().is_none_or(|t| t == 0) && self.has_searched {
                     let paragraph = Paragraph::new("No artists found")
-                        .style(styles.text_muted)
+                        .style(text_muted)
                         .block(Block::default().borders(Borders::NONE));
                     frame.render_widget(paragraph, area);
                 } else {
@@ -502,7 +500,7 @@ impl SearchView {
             SearchTab::Playlists => {
                 if self.playlist_source.total().is_none_or(|t| t == 0) && self.has_searched {
                     let paragraph = Paragraph::new("No playlists found")
-                        .style(styles.text_muted)
+                        .style(text_muted)
                         .block(Block::default().borders(Borders::NONE));
                     frame.render_widget(paragraph, area);
                 } else {

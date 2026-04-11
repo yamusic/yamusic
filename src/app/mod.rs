@@ -6,6 +6,7 @@ pub mod keymap;
 pub mod signals;
 pub mod state;
 pub mod terminal;
+pub mod theme;
 pub mod views;
 
 pub use actions::Action;

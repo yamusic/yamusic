@@ -4,15 +4,14 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::Span,
-    widgets::{Block, Borders, Clear, List, ListItem, ListState},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 use std::borrow::Cow;
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
-    app::components::fuzzy::fuzzy_match_positioned,
-    app::keymap::Key,
-    framework::{signals::Signal, theme::ThemeStyles},
+    app::components::fuzzy::fuzzy_match_positioned, app::keymap::Key, app::theme::theme,
+    framework::signals::Signal,
 };
 
 pub trait FuzzyItem {
@@ -112,6 +111,13 @@ impl<T: FuzzyItem + Clone + Send + Sync + 'static> FuzzyDropdown<T> {
 
         if !current_segment.is_empty() {
             result.push(Span::styled(current_segment, base_style));
+        }
+
+        if current_width < width {
+            result.push(Span::styled(
+                " ".repeat(width - current_width),
+                Style::default(),
+            ));
         }
 
         result
@@ -258,10 +264,15 @@ impl<T: FuzzyItem + Clone + Send + Sync + 'static> FuzzyDropdown<T> {
         }
     }
 
-    pub fn view(&mut self, frame: &mut Frame, area: Rect, styles: &ThemeStyles, max_height: u16) {
+    pub fn view(&mut self, frame: &mut Frame, area: Rect, max_height: u16) {
         if !self.is_open.get() {
             return;
         }
+
+        let colors = theme();
+        let text_style = Style::default().fg(colors.text.primary);
+        let accent_style = Style::default().fg(colors.accent.primary);
+        let selected_style = theme().selected;
 
         let filtered = self.filtered_items();
         let display_none = self.query.get().is_empty() || filtered.is_empty();
@@ -271,9 +282,6 @@ impl<T: FuzzyItem + Clone + Send + Sync + 'static> FuzzyDropdown<T> {
         let mut render_area = area;
         render_area.height = (height as u16 + 2).min(max_height);
 
-        frame.render_widget(Clear, render_area);
-        frame.render_widget(Block::default().style(styles.text), render_area);
-
         let q = self.query.get();
         let title = if q.is_empty() {
             " Search... ".to_string()
@@ -282,16 +290,26 @@ impl<T: FuzzyItem + Clone + Send + Sync + 'static> FuzzyDropdown<T> {
         };
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(styles.accent)
-            .title(Span::styled(title, styles.accent))
-            .style(styles.text);
+            .border_style(accent_style)
+            .title(Span::styled(title, accent_style));
+
+        let available_width = render_area.width.saturating_sub(2);
+        let available_width_usize = available_width as usize;
 
         let mut list_items = Vec::new();
         if display_none {
-            list_items.push(ListItem::new("None").style(styles.text));
+            use ratatui::text::Line;
+            let none = "None";
+            let none_width = none.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>();
+            let mut spans = vec![Span::styled(none, text_style)];
+            if none_width < available_width_usize {
+                spans.push(Span::styled(
+                    " ".repeat(available_width_usize - none_width),
+                    Style::default(),
+                ));
+            }
+            list_items.push(ListItem::new(Line::from(spans)).style(Style::default()));
         }
-
-        let available_width = render_area.width.saturating_sub(4);
 
         list_items.extend(filtered.iter().map(|(idx, item, positions)| {
             let label = item.label();
@@ -309,25 +327,35 @@ impl<T: FuzzyItem + Clone + Send + Sync + 'static> FuzzyDropdown<T> {
                 .chars()
                 .map(|c| c.width().unwrap_or(0))
                 .sum::<usize>();
-            let label_width = (available_width as usize).saturating_sub(prefix_width);
+            let label_width = available_width_usize.saturating_sub(prefix_width);
 
             use ratatui::text::Line;
             let mut spans = Vec::new();
 
             if !prefix.is_empty() {
-                spans.push(Span::styled(prefix, styles.text));
+                spans.push(Span::styled(prefix, text_style));
             }
 
             if positions.is_empty() {
                 let truncated = Self::truncate(&label, label_width);
-                spans.push(Span::styled(truncated, styles.text));
+                let truncated_width = truncated
+                    .chars()
+                    .map(|c| c.width().unwrap_or(0))
+                    .sum::<usize>();
+                spans.push(Span::styled(truncated, text_style));
+                if truncated_width < label_width {
+                    spans.push(Span::styled(
+                        " ".repeat(label_width - truncated_width),
+                        Style::default(),
+                    ));
+                }
             } else {
-                let highlight_style = styles.accent.add_modifier(Modifier::BOLD);
+                let highlight_style = accent_style.add_modifier(Modifier::BOLD);
 
                 spans.extend(Self::create_highlighted_spans(
                     &label,
                     label_width,
-                    styles.text,
+                    text_style,
                     positions,
                     highlight_style,
                 ));
@@ -336,11 +364,10 @@ impl<T: FuzzyItem + Clone + Send + Sync + 'static> FuzzyDropdown<T> {
             ListItem::new(Line::from(spans)).style(Style::default())
         }));
 
-        let highlight_style = styles.selected.add_modifier(Modifier::BOLD);
+        let highlight_style = selected_style.add_modifier(Modifier::BOLD);
         let list = List::new(list_items)
             .block(block)
-            .highlight_style(highlight_style)
-            .style(styles.text);
+            .highlight_style(highlight_style);
 
         self.state.select(Some(self.filtered_selection_index.get()));
         frame.render_stateful_widget(list, render_area, &mut self.state);

@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use crate::framework::theme::{ThemeColor, global_theme};
+use crate::app::theme::theme;
 
 use super::token::TokenProvider;
 
@@ -36,24 +36,38 @@ struct LoginColors {
 
 impl LoginColors {
     fn from_theme() -> Self {
-        let config = global_theme().get_config();
-        let accent_tc = config.accent;
-        let accent = accent_tc.to_ratatui();
-        let accent_rgb = match accent_tc {
-            ThemeColor::Rgb(r, g, b) => (r, g, b),
-            _ => (247, 212, 75),
-        };
+        let theme = theme();
+        let accent = theme.accent.primary;
+        let accent_rgb = rgb_or_fallback(accent, (247, 212, 75));
+
         Self {
             accent,
             accent_rgb,
-            accent_dim: accent_tc.darken(0.3).to_ratatui(),
-            bg: config.background.to_ratatui(),
-            fg: config.foreground.to_ratatui(),
-            fg_muted: config.muted.to_ratatui(),
-            error: config.error.to_ratatui(),
-            success: config.success.to_ratatui(),
+            accent_dim: darken_color(accent, 0.3),
+            bg: theme.bg.base,
+            fg: theme.text.primary,
+            fg_muted: theme.text.muted,
+            error: theme.error,
+            success: theme.success,
         }
     }
+}
+
+fn rgb_or_fallback(color: Color, fallback: (u8, u8, u8)) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        _ => fallback,
+    }
+}
+
+fn darken_color(color: Color, factor: f32) -> Color {
+    let (r, g, b) = rgb_or_fallback(color, (128, 128, 128));
+    let f = (1.0 - factor.clamp(0.0, 1.0)).max(0.0);
+    Color::Rgb(
+        (r as f32 * f) as u8,
+        (g as f32 * f) as u8,
+        (b as f32 * f) as u8,
+    )
 }
 
 #[derive(PartialEq, Eq)]

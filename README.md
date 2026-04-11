@@ -85,6 +85,7 @@ Some actions require a sequence of keys:
 - `g` + `q` - Open Queue
 - `g` + `y` - Open Lyrics
 - `g` + `e` - Open Effects
+- `g` + `t` - Open Theme Picker
 
 ### Selection Actions
 - `f` - Like selected track

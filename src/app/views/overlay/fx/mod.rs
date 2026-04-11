@@ -28,7 +28,7 @@ use crate::app::components::widgets::Slider;
 use crate::app::keymap::Key;
 use crate::app::views::overlay::fx::base::EffectMeta;
 use crate::audio::fx::EffectHandle;
-use crate::framework::theme::ThemeStyles;
+use crate::app::theme::theme;
 
 use crate::app::views::overlay::fx::bandpass::BandpassRenderer;
 use crate::app::views::overlay::fx::chorus::ChorusRenderer;
@@ -389,14 +389,15 @@ impl EffectsOverlay {
         }
     }
 
-    pub fn view(&mut self, frame: &mut Frame, area: Rect, styles: &ThemeStyles) {
+    pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let overlay_area = centered_rect(area, OVERLAY_WIDTH_PERCENT, OVERLAY_HEIGHT_PERCENT);
         frame.render_widget(Clear, overlay_area);
 
-        let accent = styles.accent.fg.unwrap_or(Color::Yellow);
-        let muted = styles.text_muted.fg.unwrap_or(Color::DarkGray);
-        let text = Color::White;
-        let bg = styles.text.bg.unwrap_or(Color::Reset);
+        let colors = theme();
+        let accent = colors.accent.primary;
+        let muted = colors.muted.fg.unwrap_or(Color::DarkGray);
+        let text = colors.text.primary;
+        let bg = colors.bg.base;
 
         let block = Block::default()
             .borders(Borders::ALL)
