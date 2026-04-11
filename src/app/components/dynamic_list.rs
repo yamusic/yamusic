@@ -10,6 +10,7 @@ use ratatui::{
 };
 
 use crate::{
+    app::theme::theme,
     app::{
         actions::Action,
         components::fuzzy::fuzzy_match_positioned,
@@ -17,7 +18,7 @@ use crate::{
         keymap::Key,
     },
     cache::image::ImageCache,
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::signals::Signal,
 };
 use ratatui_image::{StatefulImage, protocol::StatefulProtocol};
 use std::collections::HashMap;
@@ -60,7 +61,6 @@ pub struct DynamicList<T> {
     config: DynamicListConfig,
     visible_range: (usize, usize),
     title: Option<String>,
-    theme: Signal<ThemeStyles>,
     search_query: Signal<String>,
     search_mode: Signal<bool>,
     search_scope: Signal<SearchScope>,
@@ -69,17 +69,12 @@ pub struct DynamicList<T> {
 }
 
 impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
-    pub fn new(
-        source: Arc<dyn DataSource<T>>,
-        renderer: Arc<dyn ItemRenderer<T>>,
-        theme: Signal<ThemeStyles>,
-    ) -> Self {
+    pub fn new(source: Arc<dyn DataSource<T>>, renderer: Arc<dyn ItemRenderer<T>>) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
 
         let mut config = DynamicListConfig::default();
-        let styles = theme.get();
-        config.highlight_style = styles.selected.add_modifier(Modifier::BOLD);
+        config.highlight_style = theme().selected.add_modifier(Modifier::BOLD);
 
         Self {
             source,
@@ -90,7 +85,6 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             config,
             visible_range: (0, 0),
             title: None,
-            theme,
             search_query: Signal::new(String::new()),
             search_mode: Signal::new(false),
             search_scope: Signal::new(SearchScope::Full),
@@ -353,9 +347,10 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
         area_height: u16,
         total: usize,
         selected_pos: usize,
+        item_stride: usize,
     ) -> (usize, usize) {
-        let item_height = 3;
-        let visible_count = (area_height as usize).div_ceil(item_height);
+        let stride = item_stride.max(1);
+        let visible_count = ((area_height as usize) / stride).max(1);
 
         if total == 0 {
             return (0, 0);
@@ -370,11 +365,30 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
         } else {
             start
         };
-
-        let start = start.saturating_sub(2);
-        let end = (end + 2).min(total);
-
         (start, end)
+    }
+
+    fn estimate_item_stride(&self, list_width: u16, selected_abs: usize) -> usize {
+        let sample = self
+            .source
+            .range(selected_abs..selected_abs.saturating_add(1))
+            .into_iter()
+            .next()
+            .or_else(|| self.source.range(0..1).into_iter().next());
+
+        if let Some(item) = sample {
+            let rendered = self.renderer.render_with_context(
+                &item,
+                selected_abs,
+                false,
+                self.playing_index.get() == Some(selected_abs),
+                list_width.max(1),
+                &MatchHighlights::default(),
+            );
+            return rendered.height as usize + 1;
+        }
+
+        2
     }
 
     fn active_indices(&self) -> Option<Vec<(usize, MatchHighlights)>> {
@@ -643,7 +657,11 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
         let _ = ImageCache::global().version().track();
 
-        let styles = self.theme.get();
+        let colors = theme();
+        let text_style = Style::default().fg(colors.text.primary);
+        let selected_style = colors.selected;
+        let unfocused_border = colors.unfocused_border;
+        let accent_style = Style::default().fg(colors.accent.primary);
         let playing = self.playing_index.get();
         let (list_area, search_active) = if self.search_mode.get() {
             let chunks = Layout::default()
@@ -654,8 +672,14 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
         } else {
             (area, false)
         };
-        let inner_height = list_area.height.saturating_sub(2);
+        let has_border = self.title.is_some();
+        let inner_height = if has_border {
+            list_area.height.saturating_sub(2)
+        } else {
+            list_area.height
+        };
         let selected = self.selection.get();
+        let item_stride = self.estimate_item_stride(list_area.width, selected);
         let active = self.active_indices();
 
         let (total, selected_pos, list_items): (usize, usize, Vec<ListItem<'static>>) =
@@ -674,6 +698,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                         inner_height,
                         active_indices.len(),
                         selected_pos,
+                        item_stride,
                     );
                     self.visible_range = (start, end);
 
@@ -707,7 +732,8 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
                 }
             } else {
                 let total = self.source.total().unwrap_or(0);
-                let (start, end) = self.calculate_visible_range(inner_height, total, selected);
+                let (start, end) =
+                    self.calculate_visible_range(inner_height, total, selected, item_stride);
                 self.visible_range = (start, end);
 
                 if !self
@@ -753,7 +779,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             block = block
                 .title(title)
                 .borders(Borders::ALL)
-                .border_style(styles.block);
+                .border_style(unfocused_border);
         }
 
         let inner_area = block.inner(list_area);
@@ -769,10 +795,8 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             let prompt = format!(" [{}] {}", scope.label(), q);
             let search_block = Block::default()
                 .borders(Borders::ALL)
-                .border_style(styles.accent);
-            let paragraph = Paragraph::new(prompt)
-                .block(search_block)
-                .style(styles.text);
+                .border_style(accent_style);
+            let paragraph = Paragraph::new(prompt).block(search_block).style(text_style);
             frame.render_widget(paragraph, search_area);
 
             frame.render_widget(block, list_area);
@@ -789,6 +813,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
 
         let mut current_y = inner_area.y;
 
+        let list_items_len = list_items.len();
         for (i, item) in list_items.into_iter().enumerate() {
             if current_y >= inner_area.y + inner_area.height {
                 break;
@@ -812,10 +837,7 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             if is_selected {
                 frame.render_widget(
                     ratatui::widgets::Block::default().style(
-                        Style::default().bg(styles
-                            .selected
-                            .bg
-                            .unwrap_or(ratatui::style::Color::DarkGray)),
+                        Style::default().bg(selected_style.bg.unwrap_or(colors.bg.selection)),
                     ),
                     item_area,
                 );
@@ -905,11 +927,19 @@ impl<T: Clone + Send + Sync + 'static> DynamicList<T> {
             let paragraph = Paragraph::new(item.content).style(final_style);
             frame.render_widget(paragraph, text_area);
 
-            current_y += item_height + 1;
+            current_y += item_height;
+            if i + 1 < list_items_len {
+                current_y += 1;
+            }
         }
 
         if self.config.show_scrollbar && total > inner_height as usize {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("┃")
+                .thumb_style(Style::default().fg(colors.accent.primary));
             let mut scrollbar_state = ScrollbarState::new(total).position(selected);
 
             let scrollbar_area = Rect {

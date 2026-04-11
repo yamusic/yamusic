@@ -15,10 +15,8 @@ use std::{
 };
 
 use crate::{
-    audio::enums::RepeatMode,
-    cache::image::ImageCache,
-    framework::{signals::Signal, theme::ThemeStyles},
-    util::animation::Animation,
+    app::theme::theme, audio::enums::RepeatMode, cache::image::ImageCache,
+    framework::signals::Signal, util::animation::Animation,
 };
 
 pub struct PlayerSignals {
@@ -65,7 +63,6 @@ impl Default for PlayerSignals {
 
 pub struct PlayerBar {
     signals: PlayerSignals,
-    theme: Signal<ThemeStyles>,
     protocol: Option<StatefulProtocol>,
     last_art: Option<Arc<DynamicImage>>,
     last_volume: u8,
@@ -179,21 +176,33 @@ impl PlayerBarAnimation {
 }
 
 impl PlayerBar {
-    pub fn new(signals: PlayerSignals, theme: Signal<ThemeStyles>) -> Self {
+    pub fn new(signals: PlayerSignals) -> Self {
+        let last_volume = signals.volume.get();
+        let last_muted = signals.is_muted.get();
+
         Self {
             signals,
-            theme,
             protocol: None,
             last_art: None,
-            last_volume: 0,
-            last_muted: false,
+            last_volume,
+            last_muted,
             last_volume_change_at: None,
             animation: PlayerBarAnimation::new(),
         }
     }
 
     pub fn view(&mut self, frame: &mut Frame, area: Rect) {
-        let styles = self.theme.get();
+        let colors = theme();
+        let text_style = Style::default().fg(colors.text.primary).bg(colors.bg.base);
+        let muted_style = colors.muted;
+        let block_focused_style = colors.focused_border;
+        let accent_style = Style::default()
+            .fg(colors.accent.primary)
+            .bg(colors.bg.base);
+        let progress_fg = Style::default()
+            .fg(colors.accent.primary)
+            .bg(colors.bg.base);
+        let progress_bg = Style::default().fg(colors.bg.code).bg(colors.bg.base);
 
         let cache = ImageCache::global();
         let current_art = self
@@ -218,7 +227,7 @@ impl PlayerBar {
         let outer_block = Block::default()
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
-            .border_style(styles.block_focused);
+            .border_style(block_focused_style);
         let inner = outer_block.inner(area);
         frame.render_widget(outer_block, area);
 
@@ -255,10 +264,7 @@ impl PlayerBar {
             let title = self.signals.track_title.get().unwrap_or(String::new());
 
             frame.render_widget(
-                Paragraph::new(Span::styled(
-                    title,
-                    styles.text.add_modifier(Modifier::BOLD),
-                )),
+                Paragraph::new(Span::styled(title, text_style.add_modifier(Modifier::BOLD))),
                 Rect {
                     x: text_x,
                     y: row0_y,
@@ -271,7 +277,7 @@ impl PlayerBar {
         {
             let artist = self.signals.track_artists.get().unwrap_or_default();
             frame.render_widget(
-                Paragraph::new(Span::styled(artist, styles.text_muted)),
+                Paragraph::new(Span::styled(artist, muted_style)),
                 Rect {
                     x: text_x,
                     y: row1_y,
@@ -315,7 +321,7 @@ impl PlayerBar {
                 let icon_x = popup_x + popup_outer_w / 2;
 
                 frame.render_widget(
-                    Paragraph::new(Line::from(vec![Span::styled(vol_icon, styles.text_muted)])),
+                    Paragraph::new(Line::from(vec![Span::styled(vol_icon, muted_style)])),
                     Rect {
                         x: icon_x,
                         y: row1_y,
@@ -336,7 +342,7 @@ impl PlayerBar {
                     let popup_block = Block::default()
                         .borders(Borders::ALL)
                         .border_set(border::ROUNDED)
-                        .border_style(styles.text_muted);
+                        .border_style(muted_style);
                     let outer_rect = Rect {
                         x: popup_x,
                         y: popup_y,
@@ -356,7 +362,7 @@ impl PlayerBar {
                         format!("{:>2}%", vol)
                     };
                     frame.render_widget(
-                        Paragraph::new(Span::styled(pct_str, styles.text_muted)),
+                        Paragraph::new(Span::styled(pct_str, muted_style)),
                         Rect {
                             x: inner_x,
                             y: inner_y,
@@ -392,12 +398,12 @@ impl PlayerBar {
                         .saturating_sub(full_rows)
                         .saturating_sub(if has_partial { 1 } else { 0 });
 
-                    let empty_bg = styles.text_muted.bg.unwrap_or(Color::Reset);
+                    let empty_bg = muted_style.bg.unwrap_or(Color::Reset);
 
                     let side_style = Style::default();
                     let empty_center_style = Style::default().bg(empty_bg);
                     let partial_style = Style::default()
-                        .fg(styles.accent.fg.unwrap_or(Color::Reset))
+                        .fg(accent_style.fg.unwrap_or(Color::Reset))
                         .bg(empty_bg);
 
                     for row in 0..popup_h {
@@ -435,7 +441,7 @@ impl PlayerBar {
                             );
                         } else {
                             frame.render_widget(
-                                Paragraph::new(Span::styled(" █ ", styles.accent)),
+                                Paragraph::new(Span::styled(" █ ", accent_style)),
                                 Rect {
                                     x: inner_x,
                                     y: pip_y,
@@ -453,9 +459,9 @@ impl PlayerBar {
             let is_disliked = self.signals.is_disliked.get();
             let shuffle = self.signals.is_shuffled.get();
             let repeat = self.signals.repeat_mode.get();
-            let accent = styles.accent;
-            let muted_sty = styles.text_muted;
-            let normal_sty = styles.text;
+            let accent = accent_style;
+            let muted_sty = muted_style;
+            let normal_sty = text_style;
 
             let sep = || Span::raw("  ");
 
@@ -589,7 +595,7 @@ impl PlayerBar {
                 }
 
                 frame.render_widget(
-                    Paragraph::new(Span::styled(current_label, styles.text_muted)),
+                    Paragraph::new(Span::styled(current_label, muted_style)),
                     Rect {
                         x: gauge_x.saturating_sub(current_w + label_gap),
                         y: row2_y,
@@ -599,7 +605,7 @@ impl PlayerBar {
                 );
 
                 frame.render_widget(
-                    Paragraph::new(Span::styled(total_label, styles.text_muted)),
+                    Paragraph::new(Span::styled(total_label, muted_style)),
                     Rect {
                         x: gauge_x + gauge_w + label_gap,
                         y: row2_y,
@@ -612,14 +618,14 @@ impl PlayerBar {
             frame.render_widget(
                 CustomGauge::default()
                     .ratios(played, buffered)
-                    .played_style(styles.progress_fg)
-                    .buffered_style(styles.progress_bg)
+                    .played_style(progress_fg)
+                    .buffered_style(progress_bg)
                     .delimiters("▕", "▏")
-                    .delimiter_style(styles.text_muted)
+                    .delimiter_style(muted_style)
                     .remaining_style(
                         Style::default()
-                            .fg(styles.text.bg.unwrap_or_default())
-                            .bg(styles.text.bg.unwrap_or_default()),
+                            .fg(text_style.bg.unwrap_or_default())
+                            .bg(text_style.bg.unwrap_or_default()),
                     )
                     .use_unicode(true),
                 Rect {
@@ -721,7 +727,7 @@ impl<'a> CustomGauge<'a> {
 
         let width = (fill_right - fill_left) as f64;
         let played_pos = width * self.played_ratio;
-        let buffered_pos = width * self.buffered_ratio;
+        let buffered_pos = width * self.buffered_ratio.max(self.played_ratio);
 
         for y in gauge_area.top()..gauge_area.bottom() {
             for x in fill_left..fill_right {
@@ -734,6 +740,11 @@ impl<'a> CustomGauge<'a> {
                     style = self.played_style;
                     if self.use_unicode && pos + 1.0 > played_pos {
                         symbol = unicode_block(played_pos - pos);
+                        if buffered_pos > played_pos
+                            && let Some(buffered_fg) = self.buffered_style.fg
+                        {
+                            style = style.bg(buffered_fg);
+                        }
                     }
                 } else if pos < buffered_pos {
                     style = self.buffered_style;

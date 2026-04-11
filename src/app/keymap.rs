@@ -287,6 +287,10 @@ fn build_global_keymap() -> Keymap {
             KeySeq::chord(Char('g'), Char('e')),
             Navigate(ShowOverlay(Route::Effects)),
         ),
+        (
+            KeySeq::chord(Char('g'), Char('t')),
+            Navigate(ShowOverlay(Route::ThemePicker)),
+        ),
         (KeySeq::single(Char('G')), Navigate(ScrollBottom)),
         (KeySeq::single(Tab), Navigate(NextTab)),
         (KeySeq::single(BackTab), Navigate(PrevTab)),

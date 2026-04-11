@@ -6,6 +6,7 @@ use yandex_music::model::album::Album;
 
 use super::icons::ALBUM_ICON;
 use crate::app::data::{ItemRenderer, ListItem};
+use crate::app::theme::theme;
 
 pub struct AlbumRenderer;
 
@@ -29,7 +30,11 @@ impl ItemRenderer<Album> for AlbumRenderer {
         is_selected: bool,
         _is_playing: bool,
     ) -> ListItem<'static> {
-        let styles = crate::framework::theme::global_theme().styles().get();
+        let colors = theme();
+        let selected_style = colors.selected;
+        let text_muted = colors.muted;
+        let text_style = Style::default().fg(colors.text.primary);
+        let accent_style = Style::default().fg(colors.accent.primary);
         let title = album.title.clone().unwrap_or_else(|| "Unknown".to_string());
         let artists: String = album
             .artists
@@ -43,7 +48,7 @@ impl ItemRenderer<Album> for AlbumRenderer {
 
         let mut spans = Vec::new();
 
-        spans.push(Span::styled(format!("{} ", ALBUM_ICON), styles.accent));
+        spans.push(Span::styled(format!("{} ", ALBUM_ICON), accent_style));
 
         spans.push(Span::styled(
             title,
@@ -51,18 +56,18 @@ impl ItemRenderer<Album> for AlbumRenderer {
         ));
 
         if !artists.is_empty() {
-            spans.push(Span::styled(format!(" - {}", artists), styles.text_muted));
+            spans.push(Span::styled(format!(" - {}", artists), text_muted));
         }
 
         spans.push(Span::styled(
             format!("{} • {} tracks", year, track_count),
-            styles.text_muted,
+            text_muted,
         ));
 
         let style = if is_selected {
-            styles.selected.add_modifier(Modifier::BOLD)
+            selected_style.add_modifier(Modifier::BOLD)
         } else {
-            styles.text
+            text_style
         };
 
         ListItem::from_lines(vec![Line::from(spans)]).style(style)

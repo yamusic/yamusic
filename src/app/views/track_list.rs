@@ -13,11 +13,12 @@ use crate::{
         data::{DataSource, PlaylistInfo},
         keymap::Key,
         signals::AppSignals,
+        theme::theme,
         views::TrackRenderer,
     },
     audio::queue::PlaybackContext,
     cache::image::ImageCache,
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::signals::Signal,
 };
 
 #[derive(Debug, Clone)]
@@ -55,7 +56,7 @@ pub enum TrackListContext {
 }
 
 impl TrackListContext {
-    fn build_header(&self, theme: Signal<ThemeStyles>) -> Option<Header> {
+    fn build_header(&self) -> Option<Header> {
         match self {
             TrackListContext::Playlist {
                 title,
@@ -64,7 +65,7 @@ impl TrackListContext {
                 cover_url,
                 ..
             } => {
-                let header = HeaderBuilder::playlist(title, owner, *track_count, None, theme);
+                let header = HeaderBuilder::playlist(title, owner, *track_count, None);
                 Some(header.with_cover_url(cover_url.clone()))
             }
             TrackListContext::Album {
@@ -75,7 +76,7 @@ impl TrackListContext {
                 cover_url,
                 ..
             } => {
-                let header = HeaderBuilder::album(title, artists, *year, *track_count, theme);
+                let header = HeaderBuilder::album(title, artists, *year, *track_count);
                 Some(header.with_cover_url(cover_url.clone()))
             }
             TrackListContext::Artist {
@@ -86,13 +87,13 @@ impl TrackListContext {
                 cover_url,
                 ..
             } => {
-                let header = HeaderBuilder::artist(name, genres, *likes, *track_count, theme);
+                let header = HeaderBuilder::artist(name, genres, *likes, *track_count);
                 Some(header.with_cover_url(cover_url.clone()))
             }
             TrackListContext::Search {
                 query,
                 result_count,
-            } => Some(HeaderBuilder::search(query, *result_count, theme)),
+            } => Some(HeaderBuilder::search(query, *result_count)),
             TrackListContext::Queue | TrackListContext::Standalone => None,
         }
     }
@@ -132,7 +133,6 @@ pub struct TrackListView {
     source: Arc<dyn DataSource<Track>>,
     list: DynamicList<Track>,
     header: Option<Header>,
-    theme: Signal<ThemeStyles>,
     playlist: Option<Playlist>,
     playlist_info_signal: Option<Signal<Option<PlaylistInfo>>>,
 }
@@ -143,12 +143,10 @@ impl TrackListView {
         source: Arc<dyn DataSource<Track>>,
         signals: &AppSignals,
     ) -> Self {
-        let theme = signals.theme.styles().clone();
         let mut renderer = TrackRenderer::new(
             signals.library.clone(),
             signals.audio.current_track_id.clone(),
             signals.audio.is_playing.clone(),
-            theme.clone(),
         );
 
         if matches!(context, TrackListContext::Queue) {
@@ -156,7 +154,7 @@ impl TrackListView {
         }
 
         let renderer = Arc::new(renderer);
-        let list = DynamicList::new(source.clone(), renderer, theme.clone()).with_fuzzy(|track| {
+        let list = DynamicList::new(source.clone(), renderer).with_fuzzy(|track| {
             use crate::app::components::FuzzyFields;
             let title = track.title.clone().unwrap_or_default();
             let artists = track
@@ -185,14 +183,13 @@ impl TrackListView {
             cache.get_or_fetch(url);
         }
 
-        let header = context.build_header(theme.clone());
+        let header = context.build_header();
 
         Self {
             context,
             source,
             list,
             header,
-            theme,
             playlist: None,
             playlist_info_signal: None,
         }
@@ -239,7 +236,7 @@ impl TrackListView {
                     }
                 }
             }
-            self.header = self.context.build_header(self.theme.clone());
+            self.header = self.context.build_header();
         }
     }
 
@@ -303,7 +300,7 @@ impl TrackListView {
             if is_loading && no_tracks {
                 let spinner = Spinner::new()
                     .with_label("Loading tracks...")
-                    .with_style(self.theme.get().accent);
+                    .with_style(ratatui::style::Style::default().fg(theme().accent.primary));
                 spinner.view(frame, chunks[1]);
             } else {
                 self.list.view(frame, chunks[1]);
@@ -311,7 +308,7 @@ impl TrackListView {
         } else if is_loading && no_tracks {
             let spinner = Spinner::new()
                 .with_label("Loading tracks...")
-                .with_style(self.theme.get().accent);
+                .with_style(ratatui::style::Style::default().fg(theme().accent.primary));
             spinner.view(frame, area);
         } else {
             self.list.view(frame, area);
@@ -341,7 +338,7 @@ impl TrackListView {
             }
         }
 
-        self.header = self.context.build_header(self.theme.clone());
+        self.header = self.context.build_header();
     }
 
     pub fn selection_signal(&self) -> Signal<usize> {

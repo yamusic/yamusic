@@ -1,0 +1,81 @@
+[meta]
+name = "Golden Day"
+author = "vyfor"
+variant = "light"
+version = "1.0"
+description = "Signature YaMusic light theme with warm yellow accents"
+
+[palette]
+gold_600 = "#A06C08"
+gold_500 = "#BA8510"
+gold_400 = "#D4A338"
+gold_300 = "#E8C470"
+amber_500 = "#9A6008"
+orange_500 = "#8F4A08"
+success_500 = "#1E7A45"
+error_500 = "#A82E2E"
+info_500 = "#145EA8"
+bg_050 = "#FBF6EA"
+bg_100 = "#F5EDD8"
+bg_150 = "#EDE2C8"
+bg_200 = "#E4D6B4"
+bg_300 = "#D9C89C"
+bg_selection = "#F0D97A"
+bg_selection_active = "#E8C94A"
+text_900 = "#1A1409"
+text_800 = "#2A1E0E"
+text_600 = "#4E3C22"
+text_500 = "#6B5234"
+
+[tokens]
+"text.primary" = "text_900"
+"text.secondary" = "text_800"
+"text.muted" = "text_600"
+"text.dim" = "text_500"
+"bg.base" = "bg_050"
+"bg.panel" = "bg_100"
+"bg.code" = "bg_150"
+"bg.highlight" = "bg_200"
+"bg.elevated" = "bg_200"
+"bg.active" = "bg_300"
+"bg.selection" = "bg_selection"
+"accent.primary" = "gold_600"
+"accent.secondary" = "gold_500"
+"accent.tertiary" = "amber_500"
+"accent.deep" = "gold_400"
+success = "success_500"
+error = "error_500"
+warning = "gold_600"
+info = "info_500"
+"border.focused" = "gold_600"
+"border.unfocused" = "text_500"
+"code.keyword" = "gold_600"
+"code.function" = "gold_500"
+"code.string" = "amber_500"
+"code.number" = "orange_500"
+"code.comment" = "text_500"
+"code.type" = "gold_600"
+"code.line_number" = "text_500"
+
+[styles]
+keyword = { fg = "accent.primary", bold = true }
+line_number = { fg = "code.line_number" }
+cursor_line = { bg = "bg.highlight" }
+selected = { fg = "text_900", bg = "bg_selection" }
+active_selected = { fg = "text_900", bg = "bg_selection_active", bold = true }
+focused_border = { fg = "border.focused" }
+unfocused_border = { fg = "border.unfocused" }
+success_style = { fg = "success" }
+error_style = { fg = "error" }
+warning_style = { fg = "warning" }
+info_style = { fg = "info" }
+dimmed = { fg = "text.dim" }
+muted = { fg = "text.muted" }
+inline_code = { fg = "gold_600", bg = "bg.code" }
+
+[gradients]
+primary = ["gold_600", "gold_500"]
+warm = ["gold_500", "amber_500"]
+success_gradient = ["success_500", "gold_400"]
+error_gradient = ["error_500", "orange_500"]
+aurora = ["gold_600", "gold_500", "gold_400", "amber_500", "orange_500"]

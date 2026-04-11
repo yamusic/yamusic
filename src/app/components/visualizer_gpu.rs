@@ -13,11 +13,11 @@ use std::{
 };
 use yandex_music::model::track::Track;
 
+use crate::app::theme::theme;
 use crate::framework::{
     component::{Component, ComponentCore},
     id::ComponentId,
     signals::Signal,
-    theme::ThemeStyles,
 };
 
 #[repr(C)]
@@ -336,6 +336,7 @@ struct VisualizerState {
     current_bg: [f32; 3],
     like_glow_target: f32,
     like_glow_smoothed: f32,
+    use_full_blocks: bool,
     shared_params: Arc<Mutex<SharedVisualizerParams>>,
     latest_frame: Arc<Mutex<Option<RenderResult>>>,
 }
@@ -345,7 +346,6 @@ pub struct Visualizer {
     amplitude: Signal<f32>,
     is_playing: Signal<bool>,
     current_track: Signal<Option<Track>>,
-    theme: Signal<ThemeStyles>,
     state: Mutex<VisualizerState>,
 }
 
@@ -354,7 +354,6 @@ impl Visualizer {
         amplitude: Signal<f32>,
         is_playing: Signal<bool>,
         current_track: Signal<Option<Track>>,
-        theme: Signal<ThemeStyles>,
     ) -> Self {
         let shared_params = Arc::new(Mutex::new(SharedVisualizerParams {
             speed: 0.8,
@@ -445,7 +444,6 @@ impl Visualizer {
             amplitude,
             is_playing,
             current_track,
-            theme,
             state: Mutex::new(VisualizerState {
                 smoothed_amplitude: 0.0,
                 smoothed_speed: 0.8,
@@ -455,22 +453,28 @@ impl Visualizer {
                 current_bg: [0.0; 3],
                 like_glow_target: 0.0,
                 like_glow_smoothed: 0.0,
+                use_full_blocks: false,
                 shared_params,
                 latest_frame,
             }),
         }
     }
 
+    pub fn set_full_blocks(&self, enabled: bool) {
+        if let Ok(mut state) = self.state.lock() {
+            state.use_full_blocks = enabled;
+        }
+    }
+
     fn theme_palette(&self) -> ([[f32; 4]; 6], (u8, u8, u8)) {
-        let styles = self.theme.get();
-        let bg_rgb = color_to_rgb(styles.text.bg.unwrap_or_default(), (13, 13, 13));
+        let colors = theme();
+        let bg_rgb = color_to_rgb(colors.bg.base, (13, 13, 13));
 
         if let Some(track) = self.current_track.get()
             && let Some(dc) = track.derived_colors
         {
-            let accent_rgb = parse_hex_color(&dc.accent).unwrap_or_else(|| {
-                color_to_rgb(styles.accent.fg.unwrap_or_default(), (247, 212, 75))
-            });
+            let accent_rgb = parse_hex_color(&dc.accent)
+                .unwrap_or_else(|| color_to_rgb(colors.accent.primary, (247, 212, 75)));
             let wave_rgb =
                 parse_hex_color(&dc.wave_text).unwrap_or_else(|| rotate_hue(accent_rgb, 40.0));
             let mini_rgb =
@@ -489,7 +493,7 @@ impl Visualizer {
             return (palette, bg_rgb);
         }
 
-        let base_rgb = color_to_rgb(styles.accent.fg.unwrap_or_default(), (247, 212, 75));
+        let base_rgb = color_to_rgb(colors.accent.primary, (247, 212, 75));
         let palette = [
             rgb_to_vec4(base_rgb),
             rgb_to_vec4(rotate_hue(base_rgb, 40.0)),
@@ -623,6 +627,7 @@ impl Widget for &Visualizer {
         if let Some(frame) = &state.front_buffer
             && frame.data.len() == width * height
         {
+            let use_full_blocks = state.use_full_blocks;
             for y in 0..height {
                 for x in 0..width {
                     let idx = y * width + x;
@@ -630,10 +635,37 @@ impl Widget for &Visualizer {
                     if let Some(cell) =
                         buf.cell_mut((area.left() + x as u16, area.top() + y as u16))
                     {
-                        cell.set_char('▀')
-                            .set_fg(Color::Rgb(r_top, g_top, b_top))
-                            .set_bg(Color::Rgb(r_bot, g_bot, b_bot))
-                            .set_style(Style::default());
+                        if use_full_blocks {
+                            let wave_factor = 0.20_f32;
+                            let blend_toward_bg = |c: u8, bg: u8| -> u8 {
+                                let c = c as f32;
+                                let bg = bg as f32;
+                                (bg + (c - bg) * wave_factor).clamp(0.0, 255.0) as u8
+                            };
+
+                            let r_top_d = blend_toward_bg(r_top, bg_rgb.0);
+                            let g_top_d = blend_toward_bg(g_top, bg_rgb.1);
+                            let b_top_d = blend_toward_bg(b_top, bg_rgb.2);
+
+                            let r_bot_d = blend_toward_bg(r_bot, bg_rgb.0);
+                            let g_bot_d = blend_toward_bg(g_bot, bg_rgb.1);
+                            let b_bot_d = blend_toward_bg(b_bot, bg_rgb.2);
+
+                            let r = ((r_top_d as u16 + r_bot_d as u16) / 2) as u8;
+                            let g = ((g_top_d as u16 + g_bot_d as u16) / 2) as u8;
+                            let b = ((b_top_d as u16 + b_bot_d as u16) / 2) as u8;
+
+                            let col = Color::Rgb(r, g, b);
+                            cell.set_char('█')
+                                .set_fg(col)
+                                .set_bg(col)
+                                .set_style(Style::default());
+                        } else {
+                            cell.set_char('▀')
+                                .set_fg(Color::Rgb(r_top, g_top, b_top))
+                                .set_bg(Color::Rgb(r_bot, g_bot, b_bot))
+                                .set_style(Style::default());
+                        }
                     }
                 }
             }

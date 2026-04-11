@@ -6,7 +6,7 @@ pub use library::LibrarySignals;
 pub use lyrics::LyricsSignals;
 pub use navigation::NavigationSignals;
 
-use crate::{audio::signals::AudioSignals, framework::theme::Theme};
+use crate::{app::theme::Theme, audio::signals::AudioSignals};
 use std::sync::Arc;
 
 pub struct AppSignals {

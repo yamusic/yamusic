@@ -1,19 +1,17 @@
-use ratatui::{Frame, layout::Rect, style::Style, widgets::Gauge};
+use ratatui::{layout::Rect, style::Style, widgets::Gauge, Frame};
 
-use crate::framework::{signals::Signal, theme::ThemeStyles};
+use crate::{app::theme::theme, framework::signals::Signal};
 
 pub struct ProgressBar {
     progress: Signal<f32>,
     label: Signal<String>,
-    theme: Signal<ThemeStyles>,
 }
 
 impl ProgressBar {
-    pub fn new(progress: Signal<f32>, theme: Signal<ThemeStyles>) -> Self {
+    pub fn new(progress: Signal<f32>) -> Self {
         Self {
             progress,
             label: Signal::new(String::new()),
-            theme,
         }
     }
 
@@ -25,9 +23,8 @@ impl ProgressBar {
     pub fn view(&self, frame: &mut Frame, area: Rect) {
         let progress = self.progress.get().clamp(0.0, 1.0);
         let label = self.label.get();
-        let styles = self.theme.get();
-        let fg = styles.progress_fg.fg.unwrap_or_default();
-        let bg = styles.progress_bg.fg.unwrap_or_default();
+        let fg = theme().accent.primary;
+        let bg = theme().text.dim;
 
         let gauge = Gauge::default()
             .ratio(progress as f64)
@@ -41,15 +38,13 @@ impl ProgressBar {
 pub struct AudioProgressBar {
     current_ms: Signal<u64>,
     total_ms: Signal<u64>,
-    theme: Signal<ThemeStyles>,
 }
 
 impl AudioProgressBar {
-    pub fn new(current_ms: Signal<u64>, total_ms: Signal<u64>, theme: Signal<ThemeStyles>) -> Self {
+    pub fn new(current_ms: Signal<u64>, total_ms: Signal<u64>) -> Self {
         Self {
             current_ms,
             total_ms,
-            theme,
         }
     }
 
@@ -76,9 +71,8 @@ impl AudioProgressBar {
             Self::format_time(total)
         );
 
-        let styles = self.theme.get();
-        let fg = styles.progress_fg.fg.unwrap_or_default();
-        let bg = styles.progress_bg.fg.unwrap_or_default();
+        let fg = theme().accent.primary;
+        let bg = theme().text.dim;
 
         let gauge = Gauge::default()
             .ratio(ratio)

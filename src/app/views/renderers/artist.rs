@@ -6,6 +6,7 @@ use yandex_music::model::artist::Artist;
 
 use super::icons::ARTIST_ICON;
 use crate::app::data::{ItemRenderer, ListItem};
+use crate::app::theme::theme;
 
 pub struct ArtistRenderer;
 
@@ -29,7 +30,11 @@ impl ItemRenderer<Artist> for ArtistRenderer {
         is_selected: bool,
         _is_playing: bool,
     ) -> ListItem<'static> {
-        let styles = crate::framework::theme::global_theme().styles().get();
+        let colors = theme();
+        let selected_style = colors.selected;
+        let text_muted = colors.muted;
+        let text_style = Style::default().fg(colors.text.primary);
+        let accent_style = Style::default().fg(colors.accent.primary);
         let name = artist.name.clone().unwrap_or_else(|| "Unknown".to_string());
         let genres: String = artist
             .genres
@@ -39,7 +44,7 @@ impl ItemRenderer<Artist> for ArtistRenderer {
 
         let mut spans = Vec::new();
 
-        spans.push(Span::styled(format!("{} ", ARTIST_ICON), styles.accent));
+        spans.push(Span::styled(format!("{} ", ARTIST_ICON), accent_style));
 
         spans.push(Span::styled(
             name,
@@ -47,13 +52,13 @@ impl ItemRenderer<Artist> for ArtistRenderer {
         ));
 
         if !genres.is_empty() {
-            spans.push(Span::styled(format!(" • {}", genres), styles.text_muted));
+            spans.push(Span::styled(format!(" • {}", genres), text_muted));
         }
 
         let style = if is_selected {
-            styles.selected.add_modifier(Modifier::BOLD)
+            selected_style.add_modifier(Modifier::BOLD)
         } else {
-            styles.text
+            text_style
         };
 
         ListItem::from_lines(vec![Line::from(spans)]).style(style)

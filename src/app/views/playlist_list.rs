@@ -9,22 +9,21 @@ use crate::{
         components::{DynamicList, Spinner},
         data::{DataSource, PlaylistDataSource},
         keymap::Key,
+        theme::theme,
         views::PlaylistRenderer,
     },
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::signals::Signal,
 };
 
 pub struct PlaylistListView {
     pub source: Arc<PlaylistDataSource>,
     list: DynamicList<Playlist>,
-
-    theme: Signal<ThemeStyles>,
 }
 
 impl PlaylistListView {
-    pub fn new(source: Arc<PlaylistDataSource>, theme: Signal<ThemeStyles>) -> Self {
+    pub fn new(source: Arc<PlaylistDataSource>) -> Self {
         let renderer = Arc::new(PlaylistRenderer::new());
-        let list = DynamicList::new(source.clone(), renderer, theme.clone())
+        let list = DynamicList::new(source.clone(), renderer)
             .with_title("My Playlists")
             .with_fuzzy(|playlist| {
                 use crate::app::components::FuzzyFields;
@@ -38,11 +37,7 @@ impl PlaylistListView {
                 }
             });
 
-        Self {
-            source,
-            list,
-            theme,
-        }
+        Self { source, list }
     }
 
     pub fn set_loading(&self, _loading: bool) {}
@@ -83,9 +78,10 @@ impl PlaylistListView {
         );
 
         if is_loading && self.source.total().is_none_or(|t| t == 0) {
+            let colors = theme();
             let spinner = Spinner::new()
                 .with_label("Loading playlists...")
-                .with_style(self.theme.get().accent);
+                .with_style(ratatui::style::Style::default().fg(colors.accent.primary));
             spinner.view(frame, area);
             return;
         }

@@ -11,10 +11,11 @@ use crate::{
     app::{
         data::{ItemRenderer, ListItem, MatchHighlights, SearchScope},
         signals::LibrarySignals,
+        theme::theme,
         views::icons::HEART_CROSSED,
     },
     cache::image::ImageCache,
-    framework::{signals::Signal, theme::ThemeStyles},
+    framework::signals::Signal,
 };
 
 fn active_track_icon(is_playing: bool) -> &'static str {
@@ -54,7 +55,6 @@ pub struct TrackRenderer {
     show_album: bool,
     show_duration: bool,
     show_number: bool,
-    theme: Signal<ThemeStyles>,
 }
 
 impl TrackRenderer {
@@ -62,7 +62,6 @@ impl TrackRenderer {
         library: LibrarySignals,
         playing_id: Signal<Option<String>>,
         is_playing: Signal<bool>,
-        theme: Signal<ThemeStyles>,
     ) -> Self {
         Self {
             library,
@@ -72,7 +71,6 @@ impl TrackRenderer {
             show_album: true,
             show_duration: true,
             show_number: false,
-            theme,
         }
     }
 
@@ -153,7 +151,18 @@ impl ItemRenderer<Track> for TrackRenderer {
         available_width: u16,
         highlights: &MatchHighlights,
     ) -> ListItem<'static> {
-        let styles = self.theme.get();
+        let colors = theme();
+        let text_style = Style::default().fg(colors.text.primary);
+        let accent_style = Style::default().fg(colors.accent.primary);
+        let selected_style = colors.selected;
+        let selected_bg = selected_style.bg.unwrap_or(colors.bg.selection);
+        let muted_style = colors.muted;
+        let selected_accent_style = accent_style.bg(selected_bg);
+        let row_muted_style = if is_selected {
+            muted_style.bg(selected_bg)
+        } else {
+            muted_style
+        };
         let title = track.title.clone().unwrap_or_else(|| "Unknown".to_string());
         let artists: String = track
             .artists
@@ -227,18 +236,18 @@ impl ItemRenderer<Track> for TrackRenderer {
         if is_selected {
             prefix_line1.push(Span::styled(
                 "> ",
-                styles.accent.add_modifier(Modifier::BOLD),
+                selected_accent_style.add_modifier(Modifier::BOLD),
             ));
         } else if is_current {
             let icon = active_track_icon(playing);
-            prefix_line1.push(Span::styled(format!("{} ", icon), styles.accent));
+            prefix_line1.push(Span::styled(format!("{} ", icon), accent_style));
         } else if self.show_number {
-            prefix_line1.push(Span::styled(format!("{:2}", index + 1), styles.text_muted));
+            prefix_line1.push(Span::styled(format!("{:2}", index + 1), muted_style));
         } else {
             prefix_line1.push(Span::raw("  "));
         }
 
-        prefix_line2.push(Span::raw("  "));
+        prefix_line2.push(Span::styled("  ", row_muted_style));
 
         let heart = if is_disliked {
             HEART_CROSSED
@@ -249,14 +258,14 @@ impl ItemRenderer<Track> for TrackRenderer {
         };
         let heart_style = if is_selected {
             if is_liked {
-                styles.accent.add_modifier(Modifier::BOLD)
+                selected_accent_style.add_modifier(Modifier::BOLD)
             } else {
-                styles.accent
+                selected_accent_style
             }
         } else if is_liked {
-            styles.text_muted.add_modifier(Modifier::BOLD)
+            muted_style.add_modifier(Modifier::BOLD)
         } else {
-            styles.text_muted
+            row_muted_style
         };
 
         line1.push(Span::styled(format!("{}  ", heart), heart_style));
@@ -264,9 +273,10 @@ impl ItemRenderer<Track> for TrackRenderer {
         let hl_style = if is_selected {
             Style::default()
                 .fg(ratatui::style::Color::White)
+                .bg(selected_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            styles.accent.add_modifier(Modifier::BOLD)
+            accent_style.add_modifier(Modifier::BOLD)
         };
 
         let highlight_spans = |text: &str,
@@ -318,23 +328,25 @@ impl ItemRenderer<Track> for TrackRenderer {
 
         let base_text_style = if is_selected {
             Style::default()
+                .fg(selected_style.fg.unwrap_or(colors.text.primary))
+                .bg(selected_bg)
         } else {
-            Style::default().fg(styles.text.fg.unwrap_or(ratatui::style::Color::White))
+            Style::default().fg(text_style.fg.unwrap_or(ratatui::style::Color::White))
         };
 
         let (title_base_style, artist_base_style, album_base_style) = match highlights.search_scope
         {
             Some(SearchScope::Full) => (base_text_style, base_text_style, base_text_style),
-            Some(SearchScope::Title) => (base_text_style, styles.text_muted, styles.text_muted),
-            Some(SearchScope::Artist) => (styles.text_muted, base_text_style, styles.text_muted),
-            Some(SearchScope::Album) => (styles.text_muted, styles.text_muted, base_text_style),
-            None => (base_text_style, styles.text_muted, styles.text_muted),
+            Some(SearchScope::Title) => (base_text_style, row_muted_style, row_muted_style),
+            Some(SearchScope::Artist) => (row_muted_style, base_text_style, row_muted_style),
+            Some(SearchScope::Album) => (row_muted_style, row_muted_style, base_text_style),
+            None => (base_text_style, row_muted_style, row_muted_style),
         };
 
         let title_style = if is_current {
             title_base_style.add_modifier(Modifier::BOLD)
         } else if is_disliked {
-            styles.text_muted.add_modifier(Modifier::DIM)
+            row_muted_style.add_modifier(Modifier::DIM)
         } else {
             title_base_style
         };
@@ -348,7 +360,7 @@ impl ItemRenderer<Track> for TrackRenderer {
 
         line2.push(Span::styled(
             format!("{}  ", ARTIST_ICON),
-            styles.text_muted.remove_modifier(Modifier::BOLD),
+            row_muted_style.remove_modifier(Modifier::BOLD),
         ));
         line2.extend(highlight_spans(
             &artists,
@@ -359,7 +371,7 @@ impl ItemRenderer<Track> for TrackRenderer {
         ));
 
         if self.show_album && album_width > 0 {
-            line2.push(Span::styled(" 󰀥 ", styles.text_muted));
+            line2.push(Span::styled(" 󰀥 ", row_muted_style));
             line2.extend(highlight_spans(
                 &album_title,
                 album_width,
@@ -370,19 +382,41 @@ impl ItemRenderer<Track> for TrackRenderer {
         }
 
         if self.show_duration && !duration_str.is_empty() {
-            line1.push(Span::raw(" "));
-            line1.push(Span::styled("󰚭", styles.text_muted));
+            line1.push(Span::styled(" ", row_muted_style));
+            line1.push(Span::styled("󰚭", row_muted_style));
             let duration_formatted = format!("{:>5}", duration_str);
-            line1.push(Span::styled(duration_formatted, styles.text_muted));
-            line1.push(Span::raw("   "));
+            line1.push(Span::styled(duration_formatted, row_muted_style));
+            line1.push(Span::styled("   ", row_muted_style));
+        }
+
+        let line1_width = Line::from(line1.clone()).width();
+        let line2_width = Line::from(line2.clone()).width();
+        let line_fill_style = if is_selected {
+            row_muted_style
+        } else {
+            text_style
+        };
+
+        if line1_width < available_width as usize {
+            line1.push(Span::styled(
+                " ".repeat(available_width as usize - line1_width),
+                line_fill_style,
+            ));
+        }
+
+        if line2_width < available_width as usize {
+            line2.push(Span::styled(
+                " ".repeat(available_width as usize - line2_width),
+                line_fill_style,
+            ));
         }
 
         let style = if is_selected {
-            styles.selected
+            selected_style
         } else if is_disliked {
-            styles.text_muted.add_modifier(Modifier::DIM)
+            muted_style.add_modifier(Modifier::DIM)
         } else {
-            styles.text
+            text_style
         };
 
         ListItem::from_lines(vec![Line::from(line1), Line::from(line2)])
