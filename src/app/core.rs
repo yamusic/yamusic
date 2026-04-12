@@ -215,7 +215,8 @@ impl App {
 
     pub async fn process_event(&mut self, event: Event) {
         match event {
-            Event::TrackStarted(_, _) | Event::PlaybackProgress(_) => {}
+            Event::TrackStarted(_, _) => {}
+            Event::PlaybackProgress(_) => {}
             Event::QueueUpdated => {
                 self.audio.write().await.sync_queue().await;
             }
@@ -223,7 +224,7 @@ impl App {
                 let audio = self.audio.clone();
                 tokio::spawn(async move {
                     let mut audio = audio.write().await;
-                    audio.play_next().await;
+                    audio.on_track_ended().await;
                 });
             }
             Event::LikedStatusUpdated(snapshot) => {
@@ -266,6 +267,10 @@ impl App {
                         .await;
                 });
             }
+            Event::WaveBuffer(tracks) => {
+                let mut audio = self.audio.write().await;
+                audio.wave_update_buffer(tracks);
+            }
             _ => {}
         }
     }
@@ -296,7 +301,11 @@ impl App {
                 start_index,
             } => {
                 let mut audio = self.audio.write().await;
-                audio.load_context(context, tracks, start_index).await;
+                if self.current_route == Route::Queue {
+                    audio.play_track_at_index(start_index).await;
+                } else {
+                    audio.load_context(context, tracks, start_index).await;
+                }
             }
             Action::PlayTrack(track) => {
                 let mut audio = self.audio.write().await;
@@ -550,6 +559,13 @@ impl App {
                     tokio::spawn(async move {
                         let _ = api.remove_like_track(id_clone).await;
                     });
+
+                    let audio = self.audio.clone();
+                    let track = track.clone();
+                    tokio::spawn(async move {
+                        audio.write().await.send_wave_unlike(&track);
+                    });
+
                     self.toast_manager.push_line(
                         ratatui::text::Line::from(vec![
                             ratatui::text::Span::raw("Removed "),
@@ -569,6 +585,13 @@ impl App {
                     tokio::spawn(async move {
                         let _ = api.add_like_track(id_clone).await;
                     });
+
+                    let audio = self.audio.clone();
+                    let track = track.clone();
+                    tokio::spawn(async move {
+                        audio.write().await.send_wave_like(&track);
+                    });
+
                     self.toast_manager.push_line(
                         ratatui::text::Line::from(vec![
                             ratatui::text::Span::raw("Added "),
@@ -615,7 +638,13 @@ impl App {
                         && current == id
                     {
                         let mut audio = self.audio.write().await;
-                        audio.play_next().await;
+                        audio.send_wave_dislike_skip(&track).await;
+                    } else {
+                        let audio = self.audio.clone();
+                        let track = track.clone();
+                        tokio::spawn(async move {
+                            audio.write().await.send_wave_dislike(&track);
+                        });
                     }
                     self.toast_manager.push_line(
                         ratatui::text::Line::from(vec![
@@ -636,6 +665,13 @@ impl App {
                     tokio::spawn(async move {
                         let _ = api.remove_dislike_track(id_for_api).await;
                     });
+
+                    let audio = self.audio.clone();
+                    let track = track.clone();
+                    tokio::spawn(async move {
+                        audio.write().await.send_wave_undislike(&track);
+                    });
+
                     self.toast_manager.push_line(
                         ratatui::text::Line::from(vec![
                             ratatui::text::Span::raw("Removed "),

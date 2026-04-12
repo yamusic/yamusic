@@ -36,12 +36,13 @@ impl AudioController {
         stream_manager: Arc<StreamManager>,
         event_tx: Sender<Event>,
         signals: AudioSignals,
+        track_progress: Arc<TrackProgress>,
     ) -> Self {
         let controller = Self {
             engine: Arc::new(engine),
             stream_manager,
             event_tx,
-            track_progress: Arc::new(RwLock::new(Arc::new(TrackProgress::default()))),
+            track_progress: Arc::new(RwLock::new(track_progress)),
             current_playback_task: Arc::new(Mutex::new(None)),
             signals,
             effect_handles: Arc::new(RwLock::new(HashMap::new())),

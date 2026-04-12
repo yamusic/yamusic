@@ -5,7 +5,7 @@ use crate::{
         enums::RepeatMode,
         playback::PlaybackEngine,
         progress::TrackProgress,
-        queue::{PlaybackContext, QueueManager},
+        queue::{PlaybackContext, QueueManager, as_wave_seed},
         signals::AudioSignals,
         state::SystemState,
         stream_manager::StreamManager,
@@ -15,7 +15,7 @@ use crate::{
 };
 use flume::Sender;
 use im::Vector;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 use yandex_music::model::track::Track;
 
@@ -46,11 +46,14 @@ impl AudioSystem {
 
         let signals = AudioSignals::new();
 
+        let track_progress = Arc::new(TrackProgress::default());
+
         let controller = AudioController::new(
             engine,
             stream_manager.clone(),
             event_tx.clone(),
             signals.clone(),
+            track_progress.clone(),
         );
 
         let mut queue = QueueManager::new(
@@ -58,6 +61,7 @@ impl AudioSystem {
             url_cache,
             stream_manager.clone(),
             signals.clone(),
+            track_progress,
         );
         queue.set_event_tx(event_tx.clone());
         let state = Arc::new(RwLock::new(SystemState::default()));
@@ -97,11 +101,18 @@ impl AudioSystem {
         tracks: Vector<Track>,
         index: usize,
     ) -> Option<Track> {
+        let in_wave = matches!(&context, PlaybackContext::Wave(_));
         let track = self.queue.load(context, tracks, index).await;
+        if in_wave {
+            self.send_wave_started();
+        }
         if let Some(t) = &track {
             self.controller
                 .handle_command(AudioCommand::PlayTrack(t.clone()))
                 .await;
+            if in_wave {
+                self.send_wave_track_started(t);
+            }
         }
         track
     }
@@ -143,7 +154,12 @@ impl AudioSystem {
     }
 
     pub async fn on_track_ended(&mut self) {
+        self.queue.wave_finish_track();
+
         if let Some(next_track) = self.queue.get_next_track().await {
+            if self.queue.in_wave() {
+                self.send_wave_track_started(&next_track);
+            }
             self.controller
                 .handle_command(AudioCommand::PlayTrack(next_track))
                 .await;
@@ -153,11 +169,116 @@ impl AudioSystem {
     }
 
     pub async fn play_next(&mut self) {
-        if let Some(next_track) = self.queue.get_next_track().await {
+        let next = if self.queue.in_wave() {
+            self.queue.skip_wave_track().await
+        } else {
+            self.queue.get_next_track().await
+        };
+
+        if let Some(next_track) = next {
+            if self.queue.in_wave() {
+                self.send_wave_track_started(&next_track);
+            }
             self.controller
                 .handle_command(AudioCommand::PlayTrack(next_track))
                 .await;
         }
+    }
+
+    fn send_wave_feedback(
+        &self,
+        feedback_type: &'static str,
+        track_id: Option<String>,
+        total_played: Option<Duration>,
+        include_batch_id: bool,
+    ) {
+        let session = match self.queue.wave_context() {
+            Some(s) => s,
+            None => return,
+        };
+        let wave = match session.wave {
+            Some(w) => w,
+            None => return,
+        };
+        let station_id = match session.radio_session_id {
+            Some(id) => id,
+            None => return,
+        };
+        let batch_id = include_batch_id.then(|| session.batch_id.clone());
+        let from = Some(wave.id_for_from);
+
+        let api = self.api.clone();
+        tokio::spawn(async move {
+            if let Err(e) = api
+                .send_rotor_feedback(
+                    station_id,
+                    batch_id,
+                    feedback_type,
+                    track_id,
+                    from,
+                    total_played,
+                )
+                .await
+            {
+                tracing::warn!(error = %e, feedback_type, "wave_feedback_failed");
+            } else {
+                tracing::info!(feedback_type, "wave_feedback_sent");
+            }
+        });
+    }
+
+    pub fn send_wave_started(&self) {
+        self.send_wave_feedback("radioStarted", None, None, false);
+    }
+
+    pub fn send_wave_track_started(&self, track: &Track) {
+        let track_id = as_wave_seed(track);
+        self.send_wave_feedback("trackStarted", Some(track_id), None, true);
+    }
+
+    pub fn send_wave_like(&mut self, track: &Track) {
+        let track_id = as_wave_seed(track);
+        self.send_wave_feedback("like", Some(track_id), None, true);
+        self.queue.refresh_wave_queue();
+    }
+
+    pub fn send_wave_unlike(&mut self, track: &Track) {
+        let track_id = as_wave_seed(track);
+        self.send_wave_feedback("unlike", Some(track_id), None, true);
+        self.queue.refresh_wave_queue();
+    }
+
+    pub fn send_wave_dislike(&mut self, track: &Track) {
+        let track_id = as_wave_seed(track);
+        self.send_wave_feedback("dislike", Some(track_id), None, true);
+        self.queue.refresh_wave_queue();
+    }
+
+    pub async fn send_wave_dislike_skip(&mut self, track: &Track) {
+        let track_id = as_wave_seed(track);
+        self.send_wave_feedback("dislike", Some(track_id), None, true);
+        self.queue.refresh_wave_queue();
+
+        let next = if self.queue.in_wave() {
+            self.queue.skip_wave_track().await
+        } else {
+            self.queue.get_next_track().await
+        };
+
+        if let Some(next_track) = next {
+            if self.queue.in_wave() {
+                self.send_wave_track_started(&next_track);
+            }
+            self.controller
+                .handle_command(AudioCommand::PlayTrack(next_track))
+                .await;
+        }
+    }
+
+    pub fn send_wave_undislike(&mut self, track: &Track) {
+        let track_id = as_wave_seed(track);
+        self.send_wave_feedback("undislike", Some(track_id), None, true);
+        self.queue.refresh_wave_queue();
     }
 
     pub async fn play_previous(&mut self) {
@@ -353,5 +474,9 @@ impl AudioSystem {
     pub async fn is_playlist_liked(&self, uid: u64, kind: u32) -> bool {
         let state = self.state.read().await;
         state.liked.is_playlist_liked(uid, kind)
+    }
+
+    pub fn wave_update_buffer(&mut self, tracks: Vec<Track>) {
+        self.queue.wave_update_buffer(tracks);
     }
 }

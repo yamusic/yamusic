@@ -86,6 +86,14 @@ impl TrackProgress {
         self.generation.load(Ordering::Relaxed)
     }
 
+    pub fn current_position(&self) -> Duration {
+        Duration::from_millis(self.current_position_millis.load(Ordering::Relaxed))
+    }
+
+    pub fn total_duration(&self) -> Duration {
+        Duration::from_millis(self.total_duration_millis.load(Ordering::Relaxed))
+    }
+
     pub fn reset(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.set_buffered_bytes(0);

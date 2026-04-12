@@ -1,11 +1,13 @@
 use super::enums::RepeatMode;
 use super::signals::AudioSignals;
 use crate::audio::cache::UrlCache;
+use crate::audio::progress::TrackProgress;
 use crate::audio::stream_manager::StreamManager;
 use crate::event::events::Event;
 use crate::framework::signals::Signal;
 use crate::http::ApiService;
 use crate::util::track::extract_ids;
+use chrono::Utc;
 use flume::Sender;
 use im::Vector;
 use rand::{rng, seq::SliceRandom};
@@ -14,15 +16,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{error, warn};
+use yandex_music::model::rotor::feedback::{StationFeedback, StationFeedbackEvent};
 
 use yandex_music::model::{
     album::Album, artist::Artist, playlist::Playlist, rotor::session::Session, track::Track,
 };
 
 const FETCH_BATCH_SIZE: usize = 10;
+const FETCH_THRESHOLD: usize = 2;
 const URL_PREFETCH_WINDOW: usize = 5;
 const URL_PREFETCH_BATCH_SIZE: usize = 3;
-const FETCH_THRESHOLD: usize = 2;
+const WAVE_VISIBLE_TRACKS: usize = 1;
 
 #[derive(Debug)]
 enum PrefetchMessage {
@@ -164,6 +168,19 @@ pub enum PlaybackContext {
     Track(Track),
     Wave(Session),
     Standalone,
+}
+#[derive(Debug, Clone)]
+pub enum WaveTrackOutcome {
+    Finished,
+    Skipped,
+}
+
+#[derive(Debug, Clone)]
+pub struct WaveTrackEvent {
+    pub track_id: String,
+    pub total_played: Duration,
+    pub track_length: Option<Duration>,
+    pub outcome: WaveTrackOutcome,
 }
 
 struct ShuffleState {
@@ -319,8 +336,14 @@ impl FetchState {
         self.task.as_ref().map(|t| t.is_finished()).unwrap_or(false)
     }
 
-    fn set_wave_session(&self, session: Session) {
-        *self.wave_session.lock().unwrap() = Some(session);
+    fn set_wave_session(&self, mut session: Session) {
+        let mut guard = self.wave_session.lock().unwrap();
+        if session.wave.is_none()
+            && let Some(prev_wave) = guard.as_ref().and_then(|s| s.wave.clone())
+        {
+            session.wave = Some(prev_wave);
+        }
+        *guard = Some(session);
     }
 
     fn wave_session_clone(&self) -> Option<Session> {
@@ -362,24 +385,58 @@ impl FetchState {
         &mut self,
         api: Arc<ApiService>,
         event_tx: Option<Sender<Event>>,
-        history_seeds: Vec<String>,
+        wave_seeds: Vec<String>,
+        pending_feedback: Vec<WaveTrackEvent>,
     ) {
         debug_assert!(!self.is_fetching());
         let session = match self.wave_session_clone() {
             Some(s) => s,
             None => return,
         };
-        let session_id = session
-            .radio_session_id
-            .clone()
-            .unwrap_or(session.batch_id.clone());
+        let wave = match session.wave.clone() {
+            Some(w) => w,
+            None => return,
+        };
+        let session_id = match session.radio_session_id.clone() {
+            Some(id) => id,
+            None => return,
+        };
 
         self.task = Some(tokio::spawn(async move {
-            match api.get_session_tracks(session_id, history_seeds).await {
+            let feedbacks = pending_feedback
+                .into_iter()
+                .map(|e| {
+                    let feedback = StationFeedback {
+                        batch_id: Some(session.batch_id.clone()),
+                        event: StationFeedbackEvent {
+                            track_id: Some(e.track_id),
+                            item_type: Some(
+                                match e.outcome {
+                                    WaveTrackOutcome::Finished => "trackFinished",
+                                    WaveTrackOutcome::Skipped => "skip",
+                                }
+                                .to_string(),
+                            ),
+                            timestamp: Utc::now(),
+                            from: None,
+                            total_played: Some(e.total_played),
+                            track_length: e.track_length,
+                        },
+                        from: Some(wave.id_for_from.clone()),
+                    };
+
+                    feedback
+                })
+                .collect();
+            match api
+                .get_session_tracks(session_id, wave_seeds, feedbacks)
+                .await
+            {
                 Ok(response) => {
                     let new_tracks: Vec<Track> = response
                         .sequence
                         .iter()
+                        // .take(1)
                         .map(|item| item.track.clone())
                         .collect();
                     if !new_tracks.is_empty()
@@ -407,19 +464,33 @@ struct WaveExtensionHandles {
     queue: Signal<Vector<Track>>,
     queue_length: Signal<usize>,
     wave_session: Arc<Mutex<Option<Session>>>,
+    playback_context: Arc<Mutex<PlaybackContext>>,
     event_tx: Option<Sender<Event>>,
 }
 
 impl WaveExtensionHandles {
     fn apply(self, additional: Vector<Track>, session: Session) {
-        *self.wave_session.lock().unwrap() = Some(session);
+        *self.wave_session.lock().unwrap() = Some(session.clone());
+        *self.playback_context.lock().unwrap() = PlaybackContext::Wave(session);
 
-        self.queue.update(|q| q.extend(additional));
+        let visible: Vector<Track> = additional
+            .iter()
+            .take(WAVE_VISIBLE_TRACKS)
+            .cloned()
+            .collect();
+        self.queue.update(|q| q.extend(visible));
         self.queue_length
             .set(self.queue.with(|q: &Vector<Track>| q.len()));
 
-        if let Some(tx) = self.event_tx {
+        if let Some(tx) = self.event_tx.clone() {
             let _ = tx.send(Event::QueueUpdated);
+        }
+
+        let hidden: Vec<Track> = additional.into_iter().skip(WAVE_VISIBLE_TRACKS).collect();
+        if !hidden.is_empty() {
+            if let Some(tx) = self.event_tx {
+                let _ = tx.send(Event::WaveBuffer(hidden));
+            }
         }
     }
 }
@@ -514,17 +585,15 @@ pub struct QueueManager {
     pub url_cache: UrlCache,
     pub stream_manager: Arc<StreamManager>,
     url_prefetcher: UrlPrefetcher,
-
     signals: QueueSignals,
-
-    pub playback_context: PlaybackContext,
-
+    playback_context: Arc<Mutex<PlaybackContext>>,
     shuffle: ShuffleState,
-
     history: HistoryState,
-
     fetch: FetchState,
-
+    wave_buffer: VecDeque<Track>,
+    wave_feedbacks: Vec<WaveTrackEvent>,
+    wave_feedback_sent: bool,
+    track_progress: Arc<TrackProgress>,
     pub event_tx: Option<Sender<Event>>,
 }
 
@@ -534,6 +603,7 @@ impl QueueManager {
         url_cache: UrlCache,
         stream_manager: Arc<StreamManager>,
         signals: AudioSignals,
+        track_progress: Arc<TrackProgress>,
     ) -> Self {
         let url_prefetcher = UrlPrefetcher::new(api.clone(), url_cache.clone());
 
@@ -543,16 +613,41 @@ impl QueueManager {
             stream_manager,
             url_prefetcher,
             signals: QueueSignals::new(signals),
-            playback_context: PlaybackContext::Standalone,
+            playback_context: Arc::new(Mutex::new(PlaybackContext::Standalone)),
             shuffle: ShuffleState::inactive(),
             history: HistoryState::empty(),
             fetch: FetchState::new(),
+            wave_buffer: VecDeque::new(),
+            wave_feedbacks: Vec::new(),
+            wave_feedback_sent: false,
+            track_progress,
             event_tx: None,
         }
     }
 
     pub fn set_event_tx(&mut self, tx: Sender<Event>) {
         self.event_tx = Some(tx);
+    }
+
+    pub fn wave_context(&self) -> Option<Session> {
+        self.fetch.wave_session_clone()
+    }
+
+    pub fn in_wave(&self) -> bool {
+        matches!(
+            *self.playback_context.lock().unwrap(),
+            PlaybackContext::Wave(_)
+        )
+    }
+
+    pub fn playback_context(&self) -> PlaybackContext {
+        self.playback_context.lock().unwrap().clone()
+    }
+
+    pub fn wave_update_buffer(&mut self, tracks: Vec<Track>) {
+        for t in tracks {
+            self.wave_buffer.push_back(t);
+        }
     }
 
     pub async fn load(
@@ -564,59 +659,76 @@ impl QueueManager {
         self.fetch.reset();
         self.url_prefetcher.reset();
 
-        self.playback_context = context;
+        *self.playback_context.lock().unwrap() = context;
         self.shuffle.reset();
         self.history.reset();
+        self.wave_buffer.clear();
+        self.wave_feedbacks.clear();
+        self.wave_feedback_sent = false;
         self.signals.write_history(Vector::new());
         self.signals.write_shuffled(false);
 
-        match self.playback_context {
-            PlaybackContext::Playlist(ref playlist) => {
-                let all_track_ids = playlist
-                    .tracks
-                    .as_ref()
-                    .map(extract_ids)
-                    .unwrap_or_default();
-
-                let loaded_count = (start_index + tracks.len()).min(all_track_ids.len());
-                self.fetch
-                    .set_pending_ids(all_track_ids.into_iter().skip(loaded_count).collect());
-
-                if start_index >= tracks.len() {
-                    start_index = 0;
+        let wave_seed = {
+            let ctx = self.playback_context.lock().unwrap();
+            match &*ctx {
+                PlaybackContext::Playlist(playlist) => {
+                    let all_track_ids = playlist
+                        .tracks
+                        .as_ref()
+                        .map(extract_ids)
+                        .unwrap_or_default();
+                    let loaded_count = (start_index + tracks.len()).min(all_track_ids.len());
+                    self.fetch
+                        .set_pending_ids(all_track_ids.into_iter().skip(loaded_count).collect());
+                    if start_index >= tracks.len() {
+                        start_index = 0;
+                    }
+                    tracks = slice_from(tracks, start_index);
+                    self.signals.write_queue(tracks);
+                    None
                 }
-                tracks = slice_from(tracks, start_index);
-                self.signals.write_queue(tracks);
-            }
-
-            PlaybackContext::Artist(_)
-            | PlaybackContext::Album(_)
-            | PlaybackContext::Standalone => {
-                if start_index >= tracks.len() {
-                    start_index = 0;
+                PlaybackContext::Artist(_)
+                | PlaybackContext::Album(_)
+                | PlaybackContext::Standalone => {
+                    if start_index >= tracks.len() {
+                        start_index = 0;
+                    }
+                    tracks = slice_from(tracks, start_index);
+                    self.signals.write_queue(tracks);
+                    None
                 }
-                tracks = slice_from(tracks, start_index);
-                self.signals.write_queue(tracks);
-            }
-
-            PlaybackContext::Wave(ref session) => {
-                if start_index >= tracks.len() {
-                    start_index = 0;
+                PlaybackContext::Wave(session) => {
+                    if start_index >= tracks.len() {
+                        start_index = 0;
+                    }
+                    tracks = slice_from(tracks, start_index);
+                    let visible_count = 1 + WAVE_VISIBLE_TRACKS;
+                    let visible: Vector<Track> =
+                        tracks.iter().take(visible_count).cloned().collect();
+                    let hidden: Vec<Track> = tracks.into_iter().skip(visible_count).collect();
+                    self.signals.write_queue(visible);
+                    for t in hidden {
+                        self.wave_buffer.push_back(t);
+                    }
+                    self.fetch.set_wave_session(session.clone());
+                    None
                 }
-                tracks = slice_from(tracks, start_index);
-                self.signals.write_queue(tracks);
-                self.fetch.set_wave_session(session.clone());
-            }
-
-            PlaybackContext::Track(ref seed_track) => {
-                let mut initial_queue = Vector::new();
-                initial_queue.push_back(seed_track.clone());
-                self.signals.write_queue(initial_queue);
-
-                if seed_track.track_source.as_ref().is_none_or(|s| s != "UGC") {
-                    self.spawn_wave_init_for_seed(seed_track);
+                PlaybackContext::Track(seed_track) => {
+                    let mut initial_queue = Vector::new();
+                    initial_queue.push_back(seed_track.clone());
+                    self.signals.write_queue(initial_queue);
+                    let needs_init = seed_track.track_source.as_ref().is_none_or(|s| s != "UGC");
+                    if needs_init {
+                        Some(seed_track.clone())
+                    } else {
+                        None
+                    }
                 }
             }
+        };
+
+        if let Some(seed_track) = wave_seed {
+            self.wave_by_seed(&seed_track);
         }
 
         self.signals.write_index(0);
@@ -629,20 +741,15 @@ impl QueueManager {
         track
     }
 
-    fn spawn_wave_init_for_seed(&self, seed_track: &Track) {
+    fn wave_by_seed(&self, seed_track: &Track) {
         let track_id = seed_track.id.clone();
-        let album_id = seed_track
-            .albums
-            .first()
-            .and_then(|a| a.id.as_ref().map(|id| id.to_string()));
-
-        let Some(album_id) = album_id else { return };
 
         let api = self.api.clone();
         let handles = WaveExtensionHandles {
             queue: self.signals.raw_queue_handle(),
             queue_length: self.signals.raw_queue_length_handle(),
             wave_session: self.fetch.wave_session_arc(),
+            playback_context: self.playback_context.clone(),
             event_tx: self.event_tx.clone(),
         };
 
@@ -650,19 +757,9 @@ impl QueueManager {
             let Ok(session) = api.create_session(vec![format!("track:{track_id}")]).await else {
                 return;
             };
-            let seed = format!("{track_id}:{album_id}");
-            let Ok(new_tracks) = api
-                .get_session_tracks(session.batch_id.clone(), vec![seed])
-                .await
-            else {
-                return;
-            };
 
-            let additional: Vector<Track> = new_tracks
-                .sequence
-                .iter()
-                .map(|s| s.track.clone())
-                .collect();
+            let additional: Vector<Track> =
+                session.sequence.iter().map(|s| s.track.clone()).collect();
 
             if !additional.is_empty() {
                 handles.apply(additional, session);
@@ -683,8 +780,9 @@ impl QueueManager {
 
         let current = self.signals.index();
         let queue_len = self.signals.queue().len();
+        let is_wave = self.in_wave();
 
-        if current + 1 + FETCH_THRESHOLD >= queue_len {
+        if !is_wave && current + 1 + FETCH_THRESHOLD >= queue_len {
             self.trigger_fetch();
         }
 
@@ -694,15 +792,10 @@ impl QueueManager {
 
         let next = current + 1;
         if self.fetch.is_fetching()
-            && let Some((new_tracks, session)) = self.fetch.await_task().await
+            && let Some((new_tracks, _)) = self.fetch.await_task().await
             && !new_tracks.is_empty()
         {
-            let mut q = self.signals.queue();
-            q.extend(new_tracks);
-            self.signals.write_queue(q);
-            if let Some(s) = session {
-                self.fetch.set_wave_session(s);
-            }
+            self.wave_append(new_tracks);
             if next < self.signals.queue().len() {
                 return self.advance_to(next);
             }
@@ -735,10 +828,103 @@ impl QueueManager {
         self.advance_to(index)
     }
 
+    pub async fn skip_wave_track(&mut self) -> Option<Track> {
+        if self.in_wave() && !self.wave_feedback_sent {
+            if let Some(track) = self.signals.queue().get(self.signals.index()).cloned() {
+                self.wave_feedbacks.push(WaveTrackEvent {
+                    track_id: as_wave_seed(&track),
+                    outcome: WaveTrackOutcome::Skipped,
+                    total_played: self.track_progress.current_position(),
+                    track_length: None,
+                });
+                self.wave_feedback_sent = true;
+            }
+            self.wave_buffer.clear();
+            if !self.fetch.is_fetching() {
+                self.trigger_fetch();
+            }
+        }
+        let current = self.signals.index();
+        let queue_len = self.signals.queue().len();
+        if let Some(next) = PlaybackPolicy::try_advance(current, queue_len) {
+            return self.advance_to(next);
+        }
+
+        let next = current + 1;
+        if self.fetch.is_fetching()
+            && let Some((new_tracks, _)) = self.fetch.await_task().await
+            && !new_tracks.is_empty()
+        {
+            self.wave_append(new_tracks);
+            if next < self.signals.queue().len() {
+                return self.advance_to(next);
+            }
+        }
+
+        None
+    }
+
+    pub fn wave_finish_track(&mut self) {
+        if !self.in_wave() || self.wave_feedback_sent {
+            return;
+        }
+        if let Some(track) = self.signals.queue().get(self.signals.index()).cloned() {
+            let id = as_wave_seed(&track);
+            if self.wave_feedbacks.iter().any(|e| e.track_id == id) {
+                self.wave_feedback_sent = true;
+                return;
+            }
+            self.wave_feedbacks.push(WaveTrackEvent {
+                track_id: as_wave_seed(&track),
+                outcome: WaveTrackOutcome::Finished,
+                total_played: self.track_progress.current_position(),
+                track_length: track
+                    .duration
+                    .or_else(|| Some(self.track_progress.total_duration())),
+            });
+            self.wave_feedback_sent = true;
+        }
+    }
+
+    pub fn refresh_wave_queue(&mut self) {
+        if !self.in_wave() {
+            return;
+        }
+        self.wave_buffer.clear();
+        let current_index = self.signals.index();
+        let mut queue = self.signals.queue();
+        queue.truncate(current_index + 1);
+        self.signals.write_queue(queue);
+
+        if !self.fetch.is_fetching() {
+            self.trigger_fetch();
+        }
+    }
+
     fn advance_to(&mut self, index: usize) -> Option<Track> {
         self.signals.write_index(index);
+        self.wave_feedback_sent = false;
         let track = self.signals.queue().get(index).cloned()?;
         self.commit_track_to_history(track.clone());
+
+        if self.in_wave() {
+            let queue_len = self.signals.queue().len();
+            let is_at_visible_tail = index + 1 >= queue_len;
+
+            if is_at_visible_tail {
+                if let Some(next) = self.wave_buffer.pop_front() {
+                    let mut q = self.signals.queue();
+                    q.push_back(next);
+                    self.signals.write_queue(q);
+                }
+            }
+
+            let remaining = self.wave_buffer.len();
+            if remaining <= 1 && !self.fetch.is_fetching() {
+                self.trigger_fetch();
+            }
+        }
+
         self.update_prefetch_interest();
         Some(track)
     }
@@ -783,10 +969,16 @@ impl QueueManager {
     pub fn clear(&mut self) {
         self.signals.write_queue(Vector::new());
         self.signals.write_index(0);
+        self.wave_buffer.clear();
+        self.wave_feedbacks.clear();
+        self.wave_feedback_sent = false;
         self.update_prefetch_interest();
     }
 
     pub fn trigger_fetch_if_needed(&mut self) {
+        if self.in_wave() {
+            return;
+        }
         self.trigger_fetch();
     }
 
@@ -803,8 +995,13 @@ impl QueueManager {
 
         if self.fetch.wave_session_clone().is_some() {
             let history_seeds = self.build_wave_history_seeds();
-            self.fetch
-                .trigger_wave_batch(self.api.clone(), self.event_tx.clone(), history_seeds);
+            let pending_feedback = std::mem::take(&mut self.wave_feedbacks);
+            self.fetch.trigger_wave_batch(
+                self.api.clone(),
+                self.event_tx.clone(),
+                history_seeds,
+                pending_feedback,
+            );
         }
     }
 
@@ -814,16 +1011,7 @@ impl QueueManager {
             .iter()
             .rev()
             .take(20)
-            .map(|t| {
-                format!(
-                    "{}:{}",
-                    t.id,
-                    t.albums
-                        .first()
-                        .and_then(|a| a.id.as_ref().map(|id| id.to_string()))
-                        .unwrap_or_default()
-                )
-            })
+            .map(as_wave_seed)
             .collect()
     }
 
@@ -834,7 +1022,7 @@ impl QueueManager {
     }
 
     async fn consume_fetch_result(&mut self) -> bool {
-        let Some((tracks, session)) = self.fetch.await_task().await else {
+        let Some((tracks, _)) = self.fetch.await_task().await else {
             return false;
         };
 
@@ -842,15 +1030,32 @@ impl QueueManager {
             return false;
         }
 
-        let mut queue = self.signals.queue();
-        queue.extend(tracks);
-        self.signals.write_queue(queue);
-
-        if let Some(s) = session {
-            self.fetch.set_wave_session(s);
-        }
-        self.update_prefetch_interest();
+        self.wave_append(tracks);
         true
+    }
+
+    fn wave_append(&mut self, tracks: Vec<Track>) {
+        if self.in_wave() {
+            for track in tracks {
+                let current_index = self.signals.index();
+                let queue_len = self.signals.queue().len();
+                let visible_ahead = queue_len.saturating_sub(current_index + 1);
+
+                if visible_ahead < WAVE_VISIBLE_TRACKS {
+                    let mut q = self.signals.queue();
+                    q.push_back(track);
+                    self.signals.write_queue(q);
+                } else {
+                    self.wave_buffer.push_back(track);
+                }
+            }
+        } else {
+            let mut queue = self.signals.queue();
+            queue.extend(tracks);
+            self.signals.write_queue(queue);
+        }
+
+        self.update_prefetch_interest();
     }
 
     fn update_prefetch_interest(&self) {
@@ -915,5 +1120,18 @@ fn slice_from(mut v: Vector<Track>, start: usize) -> Vector<Track> {
         v.split_off(start)
     } else {
         Vector::new()
+    }
+}
+
+pub fn as_wave_seed(track: &Track) -> String {
+    if let Some(album_id) = track
+        .albums
+        .first()
+        .and_then(|a| a.id)
+        .map(|id| id.to_string())
+    {
+        format!("{}:{}", track.id, album_id)
+    } else {
+        track.id.clone()
     }
 }

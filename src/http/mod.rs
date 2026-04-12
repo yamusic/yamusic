@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
+use chrono::Utc;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use yandex_music::{
     DEFAULT_CLIENT_ID, YandexMusicClient,
@@ -21,6 +22,7 @@ use yandex_music::{
         },
         rotor::{
             create_session::CreateSessionOptions, get_session_tracks::GetSessionTracksOptions,
+            send_station_feedback::SendStationFeedbackOptions,
         },
         search::get_search::SearchOptions,
         track::{
@@ -36,7 +38,11 @@ use yandex_music::{
         collection::Collection,
         info::{lyrics::LyricsFormat, pager::Pager},
         playlist::Playlist,
-        rotor::{Rotor, session::Session},
+        rotor::{
+            Rotor,
+            feedback::{StationFeedback, StationFeedbackEvent},
+            session::Session,
+        },
         search::Search,
         track::Track,
     },
@@ -256,7 +262,10 @@ impl ApiService {
     }
 
     pub async fn create_session(&self, seeds: Vec<String>) -> color_eyre::Result<Session> {
-        let opts = CreateSessionOptions::new(seeds);
+        let opts = CreateSessionOptions::new(seeds)
+            .include_tracks_in_response(true)
+            .include_wave_model(true)
+            .interactive(true);
         Ok(self.client.create_session(opts).await?)
     }
 
@@ -264,9 +273,39 @@ impl ApiService {
         &self,
         session_id: String,
         queue: Vec<String>,
+        feedbacks: Vec<StationFeedback>,
     ) -> color_eyre::Result<Session> {
-        let opts = GetSessionTracksOptions::new(session_id, queue);
+        let opts = GetSessionTracksOptions::new(session_id, queue).feedbacks(feedbacks);
         Ok(self.client.get_session_tracks(opts).await?)
+    }
+
+    pub async fn send_rotor_feedback(
+        &self,
+        station_id: String,
+        batch_id: Option<String>,
+        feedback_type: &str,
+        track_id: Option<String>,
+        from: Option<String>,
+        total_played: Option<Duration>,
+    ) -> color_eyre::Result<()> {
+        let event = StationFeedbackEvent {
+            item_type: Some(feedback_type.to_string()),
+            timestamp: Utc::now(),
+            from: None,
+            track_id,
+            total_played,
+            track_length: None,
+        };
+        let feedback = StationFeedback {
+            batch_id: batch_id.clone(),
+            event,
+            from: from.clone(),
+        };
+
+        let opts = SendStationFeedbackOptions::new(station_id, feedback);
+        self.client.send_station_feedback(&opts).await?;
+
+        Ok(())
     }
 
     pub async fn toggle_like_track(
