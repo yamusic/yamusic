@@ -31,6 +31,7 @@ pub enum Event {
     SearchResults(Search),
     FetchError(String),
     WaveReady(Session, Vec<Track>),
+    WaveBuffer(Vec<Track>),
     QueueUpdated,
     LikedStatusUpdated(LikedSnapshot),
 
