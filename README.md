@@ -10,6 +10,10 @@ A terminal-based client for Yandex Music (unofficial). Not affiliated with Yande
 </tr>
 </table>
 
+<div align="center">
+  <div><a href="https://discord.gg/hjQddDzeVb"><img src="https://discord.com/api/guilds/1481504972464979992/widget.png?style=banner2" alt="yamusic"/></a></div>
+</div>
+
 ## Disclaimer
 
 **yamusic** is an open-source project created for educational purposes. It makes use of unofficial and undocumented APIs that are not meant for public use. Use at your own risk.
