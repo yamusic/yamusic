@@ -39,7 +39,7 @@ rodio = { version = "0.22.1", default-features = false, features = [
 ] }
 
 
-yandex-music = { version = "0.6.0" }
+yandex-music = { version = "0.7.0" }
 
 # Utilities
 unicode-width = "0.2.2"
